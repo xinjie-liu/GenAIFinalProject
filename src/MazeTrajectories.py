@@ -5,12 +5,25 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-if __name__ == "__main__":
-
+def generate_mazedata():
+    """
+    Generates and processes maze trajectory data from the D4RL pointmaze dataset.
+    
+    This function:
+    1. Downloads and loads the D4RL/pointmaze/large-dense-v2 dataset using minari
+    2. Extracts observation sequences from each episode
+    3. Processes the observations to have consistent format
+    4. Converts observations to PyTorch tensors
+    5. Pads sequences to have consistent length
+    6. Saves the processed data to 'mazedata.pt'
+    7. Loads and returns the processed trajectory data
+    
+    Returns:
+        torch.Tensor: Padded tensor of maze trajectories with shape [num_episodes, max_seq_length, feature_dim]
+    """
     # Need to run 'minari download D4RL/pointmaze/large-dense-v2'
     dataset = minari.load_dataset('D4RL/pointmaze/large-dense-v2', download=True)
     env  = dataset.recover_environment()
-
 
     # Extract all episodes
     obs_list, action_list = [], []
@@ -47,6 +60,12 @@ if __name__ == "__main__":
 
     #print 1 trajectory - note there is a 0 buffer at the end
     print(traj_data[0])
+
+    return traj_data
+
+if __name__ == "__main__":
+
+    traj_data = generate_mazedata()
 
     # Plot the positions of the trajectories and save the figure
 
