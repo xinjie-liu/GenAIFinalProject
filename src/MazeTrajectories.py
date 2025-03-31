@@ -10,7 +10,8 @@ def generate_diffusion_policy_dataset():
     Generates and processes maze trajectory data for training a diffusion policy.
     
     Returns:
-        tuple: (states_tensor, actions_tensor, combined_tensor) for different training approaches
+        tuple: (states_tensor, actions_tensor, achieved_goals_tensor, desired_goals_tensor, combined_tensor) 
+               for different training approaches
     """
     # Need to run 'minari download D4RL/pointmaze/large-dense-v2'
     dataset = minari.load_dataset('D4RL/pointmaze/large-dense-v2', download=True)
@@ -24,9 +25,18 @@ def generate_diffusion_policy_dataset():
 
     # Process observations
     obs_list_fixed = []
+    achieved_goals_list = []
+    desired_goals_list = []
     for i in range(len(obs_list)):
         obs_seq = np.array([obs_list[i]['observation']], dtype=np.float32)
         obs_list_fixed.append(np.squeeze(obs_seq, axis=0))
+        
+        # Extract achieved and desired goals
+        achieved_goal_seq = np.array([obs_list[i]['achieved_goal']], dtype=np.float32)
+        achieved_goals_list.append(np.squeeze(achieved_goal_seq, axis=0))
+        
+        desired_goal_seq = np.array([obs_list[i]['desired_goal']], dtype=np.float32)
+        desired_goals_list.append(np.squeeze(desired_goal_seq, axis=0))
     
     # Process actions similarly
     action_list_fixed = []
@@ -39,6 +49,8 @@ def generate_diffusion_policy_dataset():
     # Convert observations and actions into tensors
     obs_tensors = [torch.tensor(obs_seq, dtype=torch.float32) for obs_seq in obs_list_fixed]
     action_tensors = [torch.tensor(action_seq, dtype=torch.float32) for action_seq in action_list_fixed]
+    achieved_goal_tensors = [torch.tensor(goal_seq, dtype=torch.float32) for goal_seq in achieved_goals_list]
+    desired_goal_tensors = [torch.tensor(goal_seq, dtype=torch.float32) for goal_seq in desired_goals_list]
     
     # Ensure actions and observations match in sequence length
     # (typically actions are one less than observations since no action after final state)
@@ -67,14 +79,18 @@ def generate_diffusion_policy_dataset():
     torch.save({
         'states': padded_obs_tensor,
         'actions': padded_action_tensor,
+        'achieved_goals': achieved_goal_tensors,
+        'desired_goals': desired_goal_tensors,
         'combined': padded_combined_tensor
     }, 'maze_diffusion_policy_data.pt')
     
     print(f"States shape: {padded_obs_tensor.shape}")
     print(f"Actions shape: {padded_action_tensor.shape}")
+    print(f"Achieved goals: {len(achieved_goal_tensors)} tensors")
+    print(f"Desired goals: {len(desired_goal_tensors)} tensors")
     print(f"Combined shape: {padded_combined_tensor.shape}")
     
-    return padded_obs_tensor, padded_action_tensor, padded_combined_tensor
+    return padded_obs_tensor, padded_action_tensor, achieved_goal_tensors, desired_goal_tensors, padded_combined_tensor
 
 
 
