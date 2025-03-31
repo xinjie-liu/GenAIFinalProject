@@ -5,67 +5,82 @@ import numpy as np
 import matplotlib.pyplot as plt
 import os
 
-def generate_mazedata():
+def generate_diffusion_policy_dataset():
     """
-    Generates and processes maze trajectory data from the D4RL pointmaze dataset.
-    
-    This function:
-    1. Downloads and loads the D4RL/pointmaze/large-dense-v2 dataset using minari
-    2. Extracts observation sequences from each episode
-    3. Processes the observations to have consistent format
-    4. Converts observations to PyTorch tensors
-    5. Pads sequences to have consistent length
-    6. Saves the processed data to 'mazedata.pt'
-    7. Loads and returns the processed trajectory data
+    Generates and processes maze trajectory data for training a diffusion policy.
     
     Returns:
-        torch.Tensor: Padded tensor of maze trajectories with shape [num_episodes, max_seq_length, feature_dim]
+        tuple: (states_tensor, actions_tensor, combined_tensor) for different training approaches
     """
     # Need to run 'minari download D4RL/pointmaze/large-dense-v2'
     dataset = minari.load_dataset('D4RL/pointmaze/large-dense-v2', download=True)
-    env  = dataset.recover_environment()
+    env = dataset.recover_environment()
 
-    # Extract all episodes
+    # Extract all episodes - both observations AND actions
     obs_list, action_list = [], []
     for episode in dataset:
         obs_list.append(episode.observations)   # States
         action_list.append(episode.actions)     # Actions
 
+    # Process observations
     obs_list_fixed = []
-    for i in range(len(obs_list)):  # Process each episode separately
+    for i in range(len(obs_list)):
         obs_seq = np.array([obs_list[i]['observation']], dtype=np.float32)
         obs_list_fixed.append(np.squeeze(obs_seq, axis=0))
-        #print(np.squeeze(obs_seq, axis=0).shape)
-
-    # Check if the shapes are consistent
-    #for seq in obs_list_fixed:
-    #    print(seq.shape)  
-
+    
+    # Process actions similarly
+    action_list_fixed = []
+    for i in range(len(action_list)):
+        action_list_fixed.append(np.array(action_list[i], dtype=np.float32))
+    
+    # Convert to tensors
     from torch.nn.utils.rnn import pad_sequence
+    
+    # Convert observations and actions into tensors
+    obs_tensors = [torch.tensor(obs_seq, dtype=torch.float32) for obs_seq in obs_list_fixed]
+    action_tensors = [torch.tensor(action_seq, dtype=torch.float32) for action_seq in action_list_fixed]
+    
+    # Ensure actions and observations match in sequence length
+    # (typically actions are one less than observations since no action after final state)
+    for i in range(len(obs_tensors)):
+        if len(obs_tensors[i]) > len(action_tensors[i]):
+            # Truncate observations to match actions length
+            obs_tensors[i] = obs_tensors[i][:len(action_tensors[i])]
+        elif len(obs_tensors[i]) < len(action_tensors[i]):
+            # Truncate actions to match observations length
+            action_tensors[i] = action_tensors[i][:len(obs_tensors[i])]
+    
+    # Pad sequences to have consistent length
+    padded_obs_tensor = pad_sequence(obs_tensors, batch_first=True, padding_value=0)
+    padded_action_tensor = pad_sequence(action_tensors, batch_first=True, padding_value=0)
+    
+    # Also create combined state-action tensor (for direct trajectory modeling)
+    combined_tensors = []
+    for i in range(len(obs_tensors)):
+        # Concatenate state and action along feature dimension
+        combined = torch.cat([obs_tensors[i], action_tensors[i]], dim=1)
+        combined_tensors.append(combined)
+    
+    padded_combined_tensor = pad_sequence(combined_tensors, batch_first=True, padding_value=0)
+    
+    # Save all formats
+    torch.save({
+        'states': padded_obs_tensor,
+        'actions': padded_action_tensor,
+        'combined': padded_combined_tensor
+    }, 'maze_diffusion_policy_data.pt')
+    
+    print(f"States shape: {padded_obs_tensor.shape}")
+    print(f"Actions shape: {padded_action_tensor.shape}")
+    print(f"Combined shape: {padded_combined_tensor.shape}")
+    
+    return padded_obs_tensor, padded_action_tensor, padded_combined_tensor
 
-    # Convert observations into tensors (this assumes each observation has shape (X, 4))
-    obs_tensors = [torch.tensor(np.array(obs_seq, dtype=np.float32), dtype=torch.float32) for obs_seq in obs_list_fixed]
 
-    # Pad sequences to have consistent length (maximum length of sequences)
-    padded_obs_tensor = pad_sequence(obs_tensors, batch_first=True, padding_value=0)  # Padding value can be adjusted
-
-    print(padded_obs_tensor.shape)
-
-
-    torch.save(padded_obs_tensor, 'mazedata.pt')
-
-    traj_data = torch.load('mazedata.pt')
-
-    print(traj_data.shape)
-
-    #print 1 trajectory - note there is a 0 buffer at the end
-    print(traj_data[0])
-
-    return traj_data
 
 if __name__ == "__main__":
 
-    traj_data = generate_mazedata()
+    traj_data, _, _ = generate_diffusion_policy_dataset()
 
     # Plot the positions of the trajectories and save the figure
 
