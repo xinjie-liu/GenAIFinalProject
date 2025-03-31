@@ -96,7 +96,7 @@ def generate_diffusion_policy_dataset():
 
 if __name__ == "__main__":
 
-    traj_data, _, _ = generate_diffusion_policy_dataset()
+    traj_data, _, _, _, _ = generate_diffusion_policy_dataset()
 
     # Plot the positions of the trajectories and save the figure
 
