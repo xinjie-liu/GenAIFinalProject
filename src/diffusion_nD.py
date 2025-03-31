@@ -42,30 +42,33 @@ class SinusoidalEmbedding(nn.Module):
     def __len__(self):
         return self.size
     
-class denoising(nn.Module):
+class TrajectoryDenoising(nn.Module):
     """
-    Neural network model for denoising/noise prediction in diffusion process.
-    Takes noisy samples and timesteps as input, predicts the noise component.
+    Neural network model for denoising/noise prediction of maze trajectories.
     """
-    def __init__(self) -> None:
+    def __init__(self, state_dim=4, hidden_dim=256) -> None:
         super().__init__()
         # Timestep embedding with 128 dimensions
         self.t_embedding = SinusoidalEmbedding(size=128, scale=1.0)
-        # Spatial embeddings for x and y coordinates
-        self.x_embeddings_1 = SinusoidalEmbedding(size=64, scale=20.0)
-        self.x_embeddings_2 = SinusoidalEmbedding(size=64, scale=20.0)
+        
+        # Create embeddings for each dimension of state
+        self.state_embeddings = nn.ModuleList([
+            SinusoidalEmbedding(size=32, scale=10.0) 
+            for _ in range(state_dim)
+        ])
         
         # Neural network with multiple linear layers and GELU activations
-        self.network = nn.ModuleList([
-            nn.Linear(256, 256),
+        input_dim = 128 + 32 * state_dim  # Timestep embedding + state embeddings
+        
+        self.network = nn.Sequential(
+            nn.Linear(input_dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(256, 256),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(256, 256),
+            nn.Linear(hidden_dim, hidden_dim),
             nn.GELU(),
-            nn.Linear(256, 2)  # Output is 2D (x,y) coordinates
-        ])
-        self.network = nn.Sequential(*self.network)
+            nn.Linear(hidden_dim, state_dim)  # Output has same dimensions as input state
+        )
         
         # Initialize network weights with normal distribution
         for module in self.network.modules():
@@ -149,9 +152,9 @@ def train():
     """
     Train the diffusion model for the defined number of epochs.
     """
-    # Create a directory for training plots if it doesn't exist
-    import os
-    os.makedirs('/plots/2DMaze/training', exist_ok=True)
+    # # Create a directory for training plots if it doesn't exist
+    # import os
+    # os.makedirs('/plots/2DMaze/training', exist_ok=True)
     
     # List to store loss values for plotting
     loss_history = []
@@ -256,12 +259,6 @@ def infer_diffusion(net, samples):
     return denoised_samples
 
 if __name__ == "__main__":
-    # Initialize model and test a forward pass
-    net = denoising()
-    net(torch.Tensor([[3,3]]),torch.tensor([1]))
-
-    # Initialize the noise scheduler
-    scheduler = DDPMScheduler(num_train_timesteps=1000, beta_schedule="linear")
 
     # Training setup
     epochs = 1500
@@ -273,8 +270,13 @@ if __name__ == "__main__":
     dataset = torch.utils.data.TensorDataset(torch.tensor(dataset, dtype=torch.float32))
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
 
+    # TODO: 
+    # 1. modify model architecture + forward passfor trajectory data
+    # 2. normalize trajectory data
+    # 3. modify training loop
+
     # Initialize model, optimizer and scheduler
-    net = denoising()
+    net = TrajectoryDenoising()
     net.train()
     scaler = torch.cuda.amp.GradScaler()  # For mixed precision training
     scheduler = DDPMScheduler(num_train_timesteps=1000, beta_schedule="linear")
