@@ -165,7 +165,7 @@ if __name__ == "__main__":
     batch_size = 256
     
     # Create dataset and dataloader
-    _, _, _, _, dataset = generate_diffusion_policy_dataset()
+    _, _, _, _, dataset, dataset_statistics = generate_diffusion_policy_dataset()
     noise = torch.normal(torch.zeros(dataset.shape), std=torch.tensor(1.0))
     dataset = torch.utils.data.TensorDataset(torch.tensor(dataset, dtype=torch.float32))
     dataloader = DataLoader(dataset, batch_size=128, shuffle=True)

@@ -75,6 +75,20 @@ def generate_diffusion_policy_dataset():
     
     padded_combined_tensor = pad_sequence(combined_tensors, batch_first=True, padding_value=0)
     
+    # Normalize the combined tensor along the first dimension
+    # Calculate mean and std for normalization
+    combined_mean = padded_combined_tensor.mean(dim=0, keepdim=True)
+    combined_std = padded_combined_tensor.std(dim=0, keepdim=True)
+    # Avoid division by zero
+    combined_std = torch.where(combined_std == 0, torch.ones_like(combined_std), combined_std)
+    # Normalize the tensor
+    normalized_combined_tensor = (padded_combined_tensor - combined_mean) / combined_std
+
+    dataset_statistics = {
+        'combined_mean': combined_mean,
+        'combined_std': combined_std
+    }
+    
     # Save all formats
     torch.save({
         'states': padded_obs_tensor,
@@ -90,7 +104,7 @@ def generate_diffusion_policy_dataset():
     print(f"Desired goals: {len(desired_goal_tensors)} tensors")
     print(f"Combined shape: {padded_combined_tensor.shape}")
     
-    return padded_obs_tensor, padded_action_tensor, achieved_goal_tensors, desired_goal_tensors, padded_combined_tensor
+    return padded_obs_tensor, padded_action_tensor, achieved_goal_tensors, desired_goal_tensors, padded_combined_tensor, dataset_statistics
 
 
 
