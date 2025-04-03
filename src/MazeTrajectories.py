@@ -14,7 +14,7 @@ def generate_diffusion_policy_dataset():
                for different training approaches
     """
     # Need to run 'minari download D4RL/pointmaze/large-dense-v2'
-    dataset = minari.load_dataset('D4RL/pointmaze/large-dense-v2', download=True)
+    dataset = minari.load_dataset('D4RL/pointmaze/umaze-v2', download=True)
     env = dataset.recover_environment()
 
     # Extract all episodes - both observations AND actions
