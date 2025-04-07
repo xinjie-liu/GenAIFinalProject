@@ -6,7 +6,6 @@ import einops
 from einops.layers.torch import Rearrange
 import pdb
 
-import diffuser.utils as utils
 
 #-----------------------------------------------------------------------------#
 #---------------------------------- modules ----------------------------------#
@@ -16,12 +15,13 @@ class SinusoidalEmbedding(nn.Module):
     Positional embedding using sinusoidal functions.
     This helps the model understand the position/value of inputs in a continuous space.
     """
-    def __init__(self, size: int, scale: float = 1.0):
+    def __init__(self, size: int, scale: float = 1.0, device=torch.device('cuda')):
         super().__init__()
         # Size of the embedding vector
         self.size = size
         # Scaling factor for the input value
         self.scale = scale
+        self.device = device
 
     def forward(self, x: torch.Tensor):
         # Scale the input
@@ -29,7 +29,7 @@ class SinusoidalEmbedding(nn.Module):
         half_size = self.size // 2
         # Calculate embedding frequencies on a log scale
         emb = torch.log(torch.Tensor([10000.0])) / (half_size - 1)
-        emb = torch.exp(-emb * torch.arange(half_size))
+        emb = torch.exp(-emb * torch.arange(half_size)).to(self.device)
         # Apply sinusoidal embedding
         emb = x.unsqueeze(-1) * emb.unsqueeze(0)
         emb = torch.cat((torch.sin(emb), torch.cos(emb)), dim=-1)

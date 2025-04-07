@@ -1,3 +1,4 @@
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -69,6 +70,8 @@ class TemporalUnet(nn.Module):
         dim=32,
         dim_mults=(1, 2, 4, 8),
         attention=False,
+        apply_conditioning = True,
+        device = torch.device('cuda')
     ):
         super().__init__()
 
@@ -78,11 +81,12 @@ class TemporalUnet(nn.Module):
 
         time_dim = dim
         self.time_mlp = nn.Sequential(
-            SinusoidalEmbedding(dim),
+            SinusoidalEmbedding(dim, device=device),
             nn.Linear(dim, dim * 4),
             nn.Mish(),
             nn.Linear(dim * 4, dim),
         )
+        
 
         self.downs = nn.ModuleList([])
         self.ups = nn.ModuleList([])
@@ -103,9 +107,9 @@ class TemporalUnet(nn.Module):
                 horizon = horizon // 2
 
         mid_dim = dims[-1]
-        self.mid_block1 = ResidualTemporalBlock(mid_dim, mid_dim, embed_dim=time_dim, horizon=horizon)
-        self.mid_attn = Residual(PreNorm(mid_dim, LinearAttention(mid_dim))) if attention else nn.Identity()
-        self.mid_block2 = ResidualTemporalBlock(mid_dim, mid_dim, embed_dim=time_dim, horizon=horizon)
+        self.mid_block1 = ResidualTemporalBlock(mid_dim, mid_dim, embed_dim=time_dim, horizon=horizon).to(device)
+        self.mid_attn = Residual(PreNorm(mid_dim, LinearAttention(mid_dim))).to(device) if attention else nn.Identity().to(device)
+        self.mid_block2 = ResidualTemporalBlock(mid_dim, mid_dim, embed_dim=time_dim, horizon=horizon).to(device)
 
         for ind, (dim_in, dim_out) in enumerate(reversed(in_out[1:])):
             is_last = ind >= (num_resolutions - 1)
@@ -116,7 +120,6 @@ class TemporalUnet(nn.Module):
                 Residual(PreNorm(dim_in, LinearAttention(dim_in))) if attention else nn.Identity(),
                 Upsample1d(dim_in) if not is_last else nn.Identity()
             ]))
-
             if not is_last:
                 horizon = horizon * 2
 
@@ -125,15 +128,15 @@ class TemporalUnet(nn.Module):
             nn.Conv1d(dim, transition_dim, 1),
         )
 
-    def forward(self, x, cond, time):
+    def forward(self, x, time, cond=None):
         '''
             x : [ batch x horizon x transition ]
         '''
 
         x = einops.rearrange(x, 'b h t -> b t h')
-
         t = self.time_mlp(time)
         h = []
+
 
         for resnet, resnet2, attn, downsample in self.downs:
             x = resnet(x, t)
