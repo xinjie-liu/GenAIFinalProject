@@ -13,12 +13,24 @@ import torch.optim as optim
 import torch.utils
 import torch.utils.data
 
-from MazeTrajectories import generate_diffusion_policy_dataset
+from src.datasets.sequence_dataset import SequenceDataset
 from networks.unets import TemporalUnet
+from src.utils.logger import Logger
+from omegaconf import DictConfig, OmegaConf
+from tqdm import tqdm
 
-    
+def cycle(dl):
+    while True:
+        for data in dl:
+            yield data
 
-def train_diffusion_step(model, samples, diffusion_steps=1000, loss_factor = 0.1):
+
+def apply_conditioning(x, conditions, action_dim):
+    for t, val in conditions.items():
+        x[:, t, action_dim:] = val.clone()
+    return x
+
+def train_diffusion_step(model, scheduler, samples, action_dim, diffusion_steps=1000, loss_factor = 0.1):
     """
     Execute a single training step for the diffusion model.
     
@@ -32,23 +44,24 @@ def train_diffusion_step(model, samples, diffusion_steps=1000, loss_factor = 0.1
         Loss tensor
     """
     # Generate random noise
-    sampled_noise = torch.normal(torch.zeros(samples.shape), std=torch.tensor(1.0))
+    sampled_noise = torch.normal(torch.zeros(samples.trajectories.shape), std=torch.tensor(1.0)).cuda()
     # Sample random timesteps
     time_steps = torch.randint(
         low=0,
         high=1000,  # Exclusive upper bound (1001 → 1000 max)
-        size=(samples.shape[0],)
+        size=(samples.trajectories.shape[0],)
     )
 
     # Add noise to samples according to the timesteps
-    noised_samples = scheduler.add_noise(samples.clone(), sampled_noise, time_steps)
+    noised_samples = scheduler.add_noise(samples.trajectories.clone().cuda(), sampled_noise, time_steps)
+    noised_samples_cond = apply_conditioning(noised_samples, samples.conditions, dataset.action_dim)
     
     # Predict noise using the model
-    pred_noise = model(noised_samples, time_steps)
+    pred_noise = model(noised_samples_cond.cuda(), time_steps.cuda())
     # Calculate MSE loss between predicted and actual noise
     return loss_factor * (pred_noise - sampled_noise)**2
 
-def train(dataloader):
+def train(args, net, scheduler, dataset, dataloader, dataloader_viz):
     """
     Train the diffusion model for the defined number of epochs.
     """
@@ -57,15 +70,18 @@ def train(dataloader):
     # os.makedirs('/plots/2DMaze/training', exist_ok=True)
     
     # List to store loss values for plotting
-    loss_history = []
-    
-    for ep in range(epochs): 
-        total_loss = 0.   
-        for _, samples in enumerate(dataloader):
+    logger = Logger(args)
+    for ep in tqdm(range(args.epochs)): 
+        total_loss = 0.  
+        inner_loop = tqdm(range(args.steps_per_epoch), desc=f"Epoch {ep+1}/{args.epochs}", total=args.steps_per_epoch)
+        for j in inner_loop:
+            
             # Clear previous gradients
+            samples = next(iter(dataloader))
+            
             optimizer.zero_grad()
             # Compute loss from diffusion process
-            loss = train_diffusion_step(net, samples[0])
+            loss = train_diffusion_step(net, scheduler, samples, dataset.action_dim)
             
             # Backpropagate gradients
             loss.mean().backward()
@@ -74,26 +90,29 @@ def train(dataloader):
             optimizer.step()
             
             total_loss += loss.mean().item()
-            
+
+        
         # Calculate average loss for the epoch
-        avg_loss = total_loss / len(dataloader)
+        avg_loss = total_loss / args.steps_per_epoch
+        logger.log(log = {'loss': avg_loss}, step = ep)
+        generated_samples = infer_diffusion(net, dataloader_viz, dataset, logger, ep)
+
         # Store loss for plotting
-        loss_history.append(avg_loss)
         
         # Print training progress
-        print(f"Epoch {ep+1}/{epochs} | Loss: {avg_loss:.4f}")
+        # print(f"Epoch {ep+1}/{ep} | Loss: {avg_loss:.4f}")
         
     # Plot and save the training loss curve
-    plt.figure(figsize=(10, 6))
-    plt.plot(range(1, ep+2), loss_history, linestyle='-')
-    plt.title('Training Loss Over Epochs')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.grid(True, linestyle='--', alpha=0.7)
-    plt.savefig('/plots/2DMaze/training/loss_curve.png')
-    plt.close()
+    # plt.figure(figsize=(10, 6))
+    # plt.plot(range(1, ep+2), loss_history, linestyle='-')
+    # plt.title('Training Loss Over Epochs')
+    # plt.xlabel('Epoch')
+    # plt.ylabel('Loss')
+    # plt.grid(True, linestyle='--', alpha=0.7)
+    # plt.savefig('/plots/2DMaze/training/loss_curve.png')
+    # plt.close()
 
-def infer_diffusion_step(net, sample_t, t):
+def infer_diffusion_step(net, sample_t, cond, t, action_dim):
     """
     Perform a single denoising step during inference.
     
@@ -109,12 +128,13 @@ def infer_diffusion_step(net, sample_t, t):
     t_in = torch.tensor([t]*sample_t.shape[0], dtype=torch.float32)
     
     # Predict noise
-    noise = net(sample_t, t_in)
+    sample_t_cond = apply_conditioning(sample_t, cond, action_dim)
+    noise = net(sample_t_cond.cuda(), t_in.cuda())
     # Step the scheduler to get previous (less noisy) sample
     sample_t1 = scheduler.step(noise, t, sample_t)
     return sample_t1['prev_sample']
 
-def infer_diffusion(net, samples):
+def infer_diffusion(net, dataloader_vis, dataset, logger, global_step):
     """
     Run the full inference/sampling process from noise to data.
     
@@ -122,53 +142,126 @@ def infer_diffusion(net, samples):
         net: The trained denoising model
         samples: Initial noise samples
     """
-    denoised_samples = samples.clone()
-
+    
+    samples = next(iter(dataloader_vis))
+    sampled_noise = torch.normal(torch.zeros(samples.trajectories.shape), std=torch.tensor(1.0)) 
+    
+    denoised_samples = sampled_noise.clone().cuda()
     # Create a directory for generation plots if it doesn't exist
-    import os
-    os.makedirs('/plots/2DMaze/generation', exist_ok=True)
+    # import os
+    # os.makedirs('/plots/2DMaze/generation', exist_ok=True)
 
     # Iteratively denoise the samples
+    image_log = {}
     for step in range(1000):
         # Visualize and save intermediate results every 100 steps
         if step % 100 == 0:
             plt.figure(figsize=(10, 10))
             print(f"Step {step}")
-            plt.scatter(denoised_samples[:,0], denoised_samples[:, 1], alpha=0.7, s=5)
+            
+            # Unnormalize sample for vis
+            unnormalize_obs = dataset.normalizer.unnormalize(
+                denoised_samples[:,:,dataset.action_dim:].detach().cpu().numpy(),
+                key='observations'
+            )
+            
+            plt.scatter(unnormalize_obs.reshape((-1,4))[:,0],
+                        unnormalize_obs.reshape((-1,4))[:,1], 
+                        alpha=0.7, s=2)
+            plt.scatter(unnormalize_obs[:,0,0], unnormalize_obs[:,0,1], color='red', s=5, label='Start State')
+
             plt.title(f'Generated Samples - Step {step}/1000')
             plt.xlabel('X')
             plt.ylabel('Y')
             plt.grid(True, linestyle='--', alpha=0.5)
-            plt.savefig(f'/plots/2DMaze/generation/samples_step_{step}.png')
+            
+            image = plt.gcf()
+            image_log['denoised_step_{}'.format(step)] = image
             plt.close()
         
         # Perform one denoising step
-        denoised_samples = infer_diffusion_step(net, denoised_samples, 999 - step)
-    
+        with torch.no_grad():
+            denoised_samples = infer_diffusion_step(net, denoised_samples,
+                                                    samples.conditions, 999 - step,
+                                                    dataset.action_dim)
+            
+
     # Visualize and save final result
-    plt.figure(figsize=(10, 10))
-    print(f"Final Step {step}")
-    plt.scatter(denoised_samples[:,0], denoised_samples[:, 1], alpha=0.7, s=5)
-    plt.title('Final Generated Samples')
+    unnormalize_obs = dataset.normalizer.unnormalize(
+        denoised_samples[:,:,dataset.action_dim:].detach().cpu().numpy(),
+        key='observations'
+    )
+    
+    plt.scatter(unnormalize_obs.reshape((-1,4))[:,0],
+                unnormalize_obs.reshape((-1,4))[:,1], 
+                alpha=0.7, s=2)
+    plt.scatter(unnormalize_obs[:,0,0], unnormalize_obs[:,0,1], color='red', s=5, label='Start State')
+
+    plt.title(f'Generated Samples - Step {step}/1000')
     plt.xlabel('X')
     plt.ylabel('Y')
     plt.grid(True, linestyle='--', alpha=0.5)
-    plt.savefig('/plots/2DMaze/generation/samples_final.png')
+    image = plt.gcf()
+    image_log['denoised_step_{}'.format(step)] = image
+    plt.close()
+
+    
+    
+    unnormalize_gt = dataset.normalizer.unnormalize(
+        samples.trajectories[:,:,dataset.action_dim:].detach().cpu().numpy(),
+        key='observations'
+    )
+    plt.scatter(unnormalize_gt.reshape((-1,4))[:,0],
+                unnormalize_gt.reshape((-1,4))[:,1], 
+                alpha=0.7, s=2)
+    plt.scatter(unnormalize_gt[:,0,0], unnormalize_gt[:,0,1], color='red', s=5, label='Start State')
+
+    plt.title(f'Ground Truth')
+    plt.xlabel('X')
+    plt.ylabel('Y')
+    plt.grid(True, linestyle='--', alpha=0.5)
+    image = plt.gcf()
+    image_log['ground_truth'] = image
     plt.close()
     
-    return denoised_samples
+    logger.log_images(image_log, global_step )
+    # plt.grid(True, linestyle='--', alpha=0.5)
+    # plt.savefig('/plots/2DMaze/generation/samples_final.png')
 
 if __name__ == "__main__":
 
+
     # Training setup
-    epochs = 1500
-    batch_size = 256
+    namespace = {
+        'epochs': 10000,
+        'steps_per_epoch': 1000,
+        'train_batch_size': 1024,
+        'env_name': 'D4RL/pointmaze/umaze-v2',
+        'algorithm': 'DDPM',
+        'tag': 'GN',
+        'seed': 0,
+        'eval_batch':256,
+        'max_n_episodes': 5000
+    }
+    
+
+    args = DictConfig(namespace)
+
     
     # Create dataset and dataloader
-    _, _, _, _, dataset, dataset_statistics = generate_diffusion_policy_dataset()
-    noise = torch.normal(torch.zeros(dataset.shape), std=torch.tensor(1.0))
-    dataset = torch.utils.data.TensorDataset(torch.tensor(dataset, dtype=torch.float32))
-    dataloader = DataLoader(dataset, batch_size=128, shuffle=True)
+    # _, _, _, _, dataset_, dataset_statistics = generate_diffusion_policy_dataset()
+    dataset = SequenceDataset(
+        env = args.env_name,
+        max_n_episodes=args.max_n_episodes
+    )
+    # noise = torch.normal(torch.zeros(dataset_shape), std=torch.tensor(1.0))
+
+    dataloader = cycle(torch.utils.data.DataLoader(
+            dataset, batch_size=args.train_batch_size, num_workers=1, shuffle=True, pin_memory=True
+        ))
+    dataloader_vis = cycle(torch.utils.data.DataLoader(
+            dataset, batch_size=args.eval_batch, num_workers=0, shuffle=True, pin_memory=True
+        ))
 
     # TODO: 
     # 1. modify model architecture + forward passfor trajectory data (Done)
@@ -177,21 +270,24 @@ if __name__ == "__main__":
 
     # Initialize model, optimizer and scheduler
     net = TemporalUnet(
-        horizon=32,
-        transition_dim=4,
-        cond_dim=4
+        horizon=dataset.horizon,
+        transition_dim=dataset.observation_dim + dataset.action_dim,
+        cond_dim=4,
+        device= torch.device('cuda:0')
     )
+    
+    net.to(torch.device('cuda:0'))
     net.train()
     scaler = torch.cuda.amp.GradScaler()  # For mixed precision training
-    scheduler = DDPMScheduler(num_train_timesteps=1000, beta_schedule="linear")
+    scheduler = DDPMScheduler(num_train_timesteps=1000, beta_schedule="linear",  clip_sample=False)
     optimizer = optim.Adam(net.parameters(), lr=1e-3)  # Optimizer with learning rate
 
     # Train the model
-    train()         
+    train(args, net, scheduler, dataset, dataloader, dataloader_vis)         
     
     # Generate samples from random noise after training
     with torch.no_grad():
-        samples = torch.normal(torch.zeros(2000,2), std=torch.tensor(1.0))
+        # samples = torch.normal(torch.zeros(2000,2), std=torch.tensor(1.0))
         generated_samples = infer_diffusion(net, samples)
         
         # Save a comparison of original data vs generated samples

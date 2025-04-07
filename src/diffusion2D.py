@@ -212,7 +212,7 @@ if __name__ == "__main__":
     plt.figure()
 
     # Initialize the noise scheduler
-    scheduler = DDPMScheduler(num_train_timesteps=1000, beta_schedule="linear")
+    scheduler = DDPMScheduler(num_train_timesteps=1000, beta_schedule="linear", clip_sample=False)
     
     # Visualize noise addition at different timesteps
     sample_noise = torch.normal(torch.zeros(data.shape), std=torch.tensor(1.0))
