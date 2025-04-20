@@ -1,0 +1,15 @@
+epochs: 100
+steps_per_epoch: 1000
+train_batch_size: 1024
+env_name: D4RL/pointmaze/medium-dense-v2
+scheduler: DDPM
+tag: GN
+seed: 0
+eval_batch: 256
+max_n_episodes: 10000
+ckpt_path: ./ckpt/pointmaze/medium-dense-v2
+num_train_steps: 1000
+beta_schedule: linear
+lr: 1e-3
+clip_sample: false
+loss_factor: 0.1
