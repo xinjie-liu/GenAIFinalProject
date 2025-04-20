@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from networks.helpers import *
+from .helpers import *
 
 
 class ResidualBlock(nn.Module):

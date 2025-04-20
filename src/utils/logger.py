@@ -9,7 +9,7 @@ class Logger:
         self.args = args
             
         wandb.init(project="diffpol", 
-                    group = '{}_{}{}'.format(self.args.env_name, self.args.algorithm, self.args.tag),
+                    group = '{}_{}{}'.format(self.args.env_name, self.args.scheduler, self.args.tag),
                     name = 'seed{}_date{}'.format(self.args.seed, time_path),
                     )
         # Add extra arguments to existing args under separate header
