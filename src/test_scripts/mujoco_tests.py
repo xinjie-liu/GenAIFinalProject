@@ -1,4 +1,5 @@
-import os
+import os, sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 import random
 import time
 from dataclasses import dataclass
@@ -8,6 +9,9 @@ import numpy as np
 import torch
 import tyro
 from torch.utils.tensorboard import SummaryWriter
+from omegaconf import DictConfig
+from src.datasets.cheetah_sequence_dataset import SequenceDataset
+from src.solvers.diffusionpolicy import DiffusionPolicy, cycle
 
 @dataclass
 class Args:
@@ -27,13 +31,16 @@ class Args:
     """the entity (team) of wandb's project"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
-    env_id: str = "Hopper-v4"
+    env_id: str = "HalfCheetah-v5"
     """the environment id of the task"""
+    dataset_name: str = 'mujoco/halfcheetah/medium-v0'
+    """the dataset name of the task"""
     algorithm: str = "diffusion"
     """the algorithm to use"""
     num_runs: int = 10
     """the number of runs for evaluation"""
-
+    action_chunk_size: int = 8
+    """the number of actions to take at a time"""
 
 def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
@@ -70,6 +77,34 @@ if __name__ == "__main__":
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
+    namespace = {
+        'epochs': 100,
+        'steps_per_epoch': 1000,
+        'train_batch_size': 1024,
+        'env_name': args.dataset_name,
+        'algorithm': 'DDPM',
+        'tag': 'GN',
+        'seed': args.seed,
+        'eval_batch': 256,
+        'max_n_episodes': 5000,
+        'scheduler': 'DDPM',
+        'beta_schedule':'linear',
+        'num_train_steps':1000,
+        'lr': 1e-3,
+        'clip_sample': False,
+        'loss_factor': 0.1,
+    }
+    diffuser_args = DictConfig(namespace)
+    dataset = SequenceDataset(
+        env = diffuser_args.env_name,
+        max_n_episodes=diffuser_args.max_n_episodes
+    )
+    diffuser_args.horizon = dataset.horizon
+    diffuser_args.observation_dim = dataset.observation_dim
+    diffuser_args.action_dim = dataset.action_dim
+    dataloader_vis = cycle(torch.utils.data.DataLoader(
+            dataset, batch_size=diffuser_args.eval_batch, num_workers=0, shuffle=True, pin_memory=True
+        ))
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -78,6 +113,11 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = args.torch_deterministic
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
+
+
+    diffuser = DiffusionPolicy(diffuser_args)
+    diffuser.net.load_state_dict(torch.load('src/half-cheetah-model'))
+    sample_shape = (1,) + dataset[0].trajectories.shape
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
@@ -94,8 +134,21 @@ if __name__ == "__main__":
     for ii in range(args.num_runs):
         
         obs, _ = envs.reset(seed=args.seed)
+        step_along_diffusion_plan = 0
+        diffusion_plan = None
         while True:
-            actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
+            conditions = {0: torch.tensor(obs, device=device)}
+            if step_along_diffusion_plan % args.action_chunk_size == 0:
+                diffusion_plan = diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)
+                step_along_diffusion_plan = 0
+                actions = diffusion_plan[0, 0, :][None, :]
+                step_along_diffusion_plan += 1
+            else:
+                actions = diffusion_plan[0, step_along_diffusion_plan, :][None, :]
+                step_along_diffusion_plan += 1
+
+            # random actions
+            # actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, rewards, terminations, truncations, infos = envs.step(actions)
             # Added this to handle both termination and truncation
