@@ -13,12 +13,15 @@ import torch.optim as optim
 import torch.utils
 import torch.utils.data
 
+import os, sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 
 from src.utils.logger import Logger
 from src.networks.unets import TemporalUnet
+from src.datasets.sequence_dataset import SequenceDataset
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
-import os 
+
 
 def cycle(dl):
     while True:
@@ -288,32 +291,27 @@ class DiffusionPolicy:
     # plt.grid(True, linestyle='--', alpha=0.5)
     # plt.savefig('/plots/2DMaze/generation/samples_final.png')
 
-    def policy_act(self, condition):
+    def policy_act(self, condition, sample_shape, action_dim, normalizer):
         
-        sampled_noise = torch.normal(torch.zeros(samples.trajectories.shape), std=torch.tensor(1.0)) 
+        sampled_noise = torch.normal(torch.zeros(sample_shape), std=torch.tensor(1.0)) 
         denoised_samples = sampled_noise.clone().cuda()
+        for step in range(1000):
+            # Perform one denoising step
+            with torch.no_grad():
+                print(f"Step {step}")
+                denoised_samples = self.infer_diffusion_step(denoised_samples,
+                                                        condition, 999 - step,
+                                                        action_dim)
+        unnormalize_obs = normalizer.unnormalize(
+            denoised_samples[:,:,self.args.action_dim:].detach().cpu().numpy(),
+            key='observations'
+        )
+        unnormalize_actions = normalizer.unnormalize(
+            denoised_samples[:,:,:action_dim].detach().cpu().numpy(),
+            key='actions'
+        )
+        return unnormalize_actions
 
-# if __name__ == "__main__":
-
-
-#     # Training setup
-#     namespace = {
-#         'epochs': 100,
-#         'steps_per_epoch': 1000,
-#         'train_batch_size': 1024,
-#         'env_name': 'D4RL/pointmaze/large-dense-v2',
-#         'scheduler': 'DDPM',
-#         'tag': 'GN',
-#         'seed': 0,
-#         'eval_batch':256,
-#         'max_n_episodes': 10000,
-#         'num_train_steps':1000,
-#         'beta_schedule':'linear',
-#         'lr': 1e-3,
-#         'clip_sample': False,
-#         'loss_factor': 0.1,
-#         'ckpt_path': 'ckpts/pointmaze_large_dense',
-#     }
     
 
 #     args = DictConfig(namespace)
