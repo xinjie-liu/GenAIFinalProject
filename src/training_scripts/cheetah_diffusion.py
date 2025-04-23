@@ -113,13 +113,14 @@ def infer_diffusion(net, dataloader_vis, dataset, logger, global_step):
 
 
 
+
 if __name__ == "__main__":
 
     namespace = {
         'epochs': 100,
         'steps_per_epoch': 1000,
         'train_batch_size': 1024,
-        'env_name': 'mujoco/halfcheetah/medium-v0',
+        'env_name': 'mujoco/halfcheetah/expert-v0',
         'algorithm': 'DDPM',
         'tag': 'GN',
         'seed': 0,
@@ -136,11 +137,14 @@ if __name__ == "__main__":
     net = TemporalUnet(
         horizon=dataset.horizon,
         transition_dim=dataset.observation_dim + dataset.action_dim,
-        cond_dim=4,
+        cond_dim=dataset.observation_dim,
         device=device
     ).to(device)
     net.train()
     scheduler = DDPMScheduler(num_train_timesteps=1000, beta_schedule="linear", clip_sample=False)
+    #optimizer = optim.Adam(net.parameters(), lr=2e-3)
+
     optimizer = optim.Adam(net.parameters(), lr=1e-3)
+
 
     train(args, net, scheduler, dataset, dataloader, dataloader_vis)
