@@ -9,7 +9,10 @@ eval_batch: 256
 max_n_episodes: 10000
 ckpt_path: ./ckpt/pointmaze/large-dense-v2
 num_train_steps: 1000
-beta_schedule: linear
+beta_schedule: squaredcos_cap_v2
 lr: 1e-3
 clip_sample: false
 loss_factor: 0.1
+horizon: 64
+action_weight: 10.0
+predict_epsilon: true

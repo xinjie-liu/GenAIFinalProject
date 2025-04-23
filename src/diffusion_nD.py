@@ -13,7 +13,7 @@ import torch.optim as optim
 import torch.utils
 import torch.utils.data
 
-from src.datasets.sequence_dataset import SequenceDataset
+
 from networks.unets import TemporalUnet
 from src.utils.logger import Logger
 from omegaconf import DictConfig, OmegaConf
@@ -31,10 +31,23 @@ def cycle(dl):
 @hydra.main(version_base=None, config_path="configs/", config_name="maze_2d_large_dense.yaml")
 def train(args:DictConfig):
     
-    dataset = SequenceDataset(
-        env = args.env_name,
-        max_n_episodes=args.max_n_episodes
-    )
+    if 'mujoco' in args.env_name:
+        from src.datasets.cheetah_sequence_dataset import SequenceDataset
+        
+        dataset = SequenceDataset(
+            env = args.env_name,
+            max_n_episodes=args.max_n_episodes,
+            horizon=args.horizon
+        )
+    else:
+        from src.datasets.sequence_dataset import SequenceDataset
+        
+        dataset = SequenceDataset(
+            env = args.env_name,
+            max_n_episodes=args.max_n_episodes,
+            horizon=args.horizon
+        )
+    
     
     with open_dict(args):
         args.horizon = dataset.horizon

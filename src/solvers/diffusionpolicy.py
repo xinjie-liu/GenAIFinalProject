@@ -54,13 +54,30 @@ class DiffusionPolicy:
         self.net.to(torch.device('cuda:0'))
         self.net.train()
         scaler = torch.cuda.amp.GradScaler()  # For mixed precision training
+        if self.args.predict_epsilon:
+            prediction_type = 'epsilon'
+        else:
+            prediction_type = 'sample'
         if args.scheduler == 'DDPM':
-            self.scheduler = DDPMScheduler(num_train_timesteps=args.num_train_steps, beta_schedule=args.beta_schedule,  clip_sample=args.clip_sample)
+            self.scheduler = DDPMScheduler(
+                num_train_timesteps=args.num_train_steps,
+                beta_schedule=args.beta_schedule,
+                clip_sample=args.clip_sample,
+                prediction_type=prediction_type)
         elif args.scheduler == 'DDIM':
-            self.scheduler = DDIMScheduler(num_train_timesteps=args.num_train_steps, beta_schedule=args.beta_schedule, clip_sample=args.clip_sample)
+            self.scheduler = DDIMScheduler(num_train_timesteps=args.num_train_steps, 
+                                           beta_schedule=args.beta_schedule, 
+                                           clip_sample=args.clip_sample,
+                                           prediction_type=prediction_type
+                                           )
         self.optimizer = optim.Adam(self.net.parameters(), lr=1e-3)  # Optimizer with learning rate
         self.epoch = 0
-
+        self.visualization_step = args.num_train_steps // 10  # Visualize every 100 steps
+        # self.loss_weight = self.get_loss_weights(self.args.action_weight,
+        #                                          self.args.discount,
+        #                                          None
+        #                                          )
+        
     def apply_conditioning(self, x, conditions, action_dim):
         for t, val in conditions.items():
             x[:, t, action_dim:] = val.clone()
@@ -84,8 +101,39 @@ class DiffusionPolicy:
             return
         checkpoint = torch.load(os.path.join(self.args.ckpt_path, 'checkpoint.pth'), weights_only=True)  # Security measure [4][5]
         self.net.load_state_dict(checkpoint['model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimzer_state_dict'])
         self.epoch = checkpoint['epoch']
+
+
+    def get_loss_weights(self, action_weight, discount, weights_dict):
+        '''
+            sets loss coefficients for trajectory
+
+            action_weight   : float
+                coefficient on first action loss
+            discount   : float
+                multiplies t^th timestep of trajectory loss by discount**t
+            weights_dict    : dict
+                { i: c } multiplies dimension i of observation loss by c
+        '''
+        self.action_weight = action_weight
+
+        dim_weights = torch.ones(self.args.observation_dim + self.args.action_dim, 
+                                 dtype=torch.float32)
+
+        ## set loss coefficients for dimensions of observation
+        if weights_dict is None: weights_dict = {}
+        for ind, w in weights_dict.items():
+            dim_weights[self.args.action_dim + ind] *= w
+
+        ## decay loss with trajectory timestep: discount**t
+        discounts = discount ** torch.arange(self.horizon, dtype=torch.float)
+        discounts = discounts / discounts.mean()
+        loss_weights = torch.einsum('h,t->ht', discounts, dim_weights)
+
+        ## manually set a0 weight
+        loss_weights[0, :self.args.action_dim] = action_weight
+        return loss_weights
 
         
     def train_diffusion_step(self, model, scheduler, samples, action_dim):
@@ -111,13 +159,22 @@ class DiffusionPolicy:
         )
 
         # Add noise to samples according to the timesteps
-        noised_samples = self.scheduler.add_noise(samples.trajectories.clone().cuda(), sampled_noise, time_steps)
+        noised_samples = self.scheduler.add_noise(
+            samples.trajectories.clone().cuda(), 
+            sampled_noise, 
+            time_steps
+            )
         noised_samples_cond = self.apply_conditioning(noised_samples, samples.conditions, self.args.action_dim)
         
         # Predict noise using the model
         pred_noise = model(noised_samples_cond.cuda(), time_steps.cuda())
         # Calculate MSE loss between predicted and actual noise
-        return self.args.loss_factor * (pred_noise - sampled_noise)**2
+        if seflf.args.predict_epsilon:
+            # If predicting epsilon, compute loss directly on predicted noise
+            loss = self.args.loss_factor * (pred_noise - sampled_noise)**2
+        else:
+            loss = self.args.loss_factor * (pred_noise - samples.trajectories.clone().cuda())**2
+        return loss
 
     def train(self, dataset, dataloader, dataloader_viz):
         """
@@ -213,16 +270,16 @@ class DiffusionPolicy:
 
         # Iteratively denoise the samples
         image_log = {}
-        for step in range(1000):
+        for step in range(self.args.num_train_steps):
             # Visualize and save intermediate results every 100 steps
         
-            if plot and step % 100 == 0:
+            if plot and step % self.visualization_step== 0:
                 plt.figure(figsize=(10, 10))
                 print(f"Step {step}")
                 
                 # Unnormalize sample for vis
                 unnormalize_obs = dataset.normalizer.unnormalize(
-                    denoised_samples[:,:,self.args.action_dim:].detach().cpu().numpy(),
+                    denoised_samples[:,:,self.args.action_dim:].detach().cpu().numpy().copy(),
                     key='observations'
                 )
                 
@@ -230,8 +287,8 @@ class DiffusionPolicy:
                             unnormalize_obs.reshape((-1,4))[:,1], 
                             alpha=0.7, s=2)
                 plt.scatter(unnormalize_obs[:,0,0], unnormalize_obs[:,0,1], color='red', s=5, label='Start State')
-
-                plt.title(f'Generated Samples - Step {step}/1000')
+                plt.scatter(unnormalize_obs[:,-1,0], unnormalize_obs[:,-1,1], color='green', s=5, label='End State')
+                plt.title(f'Generated Samples - Step {step}/{self.args.num_train_steps}')
                 plt.xlabel('X')
                 plt.ylabel('Y')
                 plt.grid(True, linestyle='--', alpha=0.5)
@@ -243,13 +300,13 @@ class DiffusionPolicy:
             # Perform one denoising step
             with torch.no_grad():
                 denoised_samples = self.infer_diffusion_step( denoised_samples,
-                                                        samples.conditions, 999 - step,
+                                                        samples.conditions, self.args.num_train_steps - 1 - step,
                                                         dataset.action_dim)
                 
 
         # Visualize and save final result
         unnormalize_obs = dataset.normalizer.unnormalize(
-            denoised_samples[:,:,self.args.action_dim:].detach().cpu().numpy(),
+            denoised_samples[:,:,self.args.action_dim:].detach().cpu().numpy().copy(),
             key='observations'
         )
         
@@ -258,8 +315,8 @@ class DiffusionPolicy:
                         unnormalize_obs.reshape((-1,4))[:,1], 
                         alpha=0.7, s=2)
             plt.scatter(unnormalize_obs[:,0,0], unnormalize_obs[:,0,1], color='red', s=5, label='Start State')
-
-            plt.title(f'Generated Samples - Step {step}/1000')
+            plt.scatter(unnormalize_obs[:,-1,0], unnormalize_obs[:,-1,1], color='green', s=5, label='End State')
+            plt.title(f'Generated Samples - Step {step}/{self.args.num_train_steps}')
             plt.xlabel('X')
             plt.ylabel('Y')
             plt.grid(True, linestyle='--', alpha=0.5)
@@ -270,7 +327,7 @@ class DiffusionPolicy:
         
         
         unnormalize_gt = dataset.normalizer.unnormalize(
-            samples.trajectories[:,:,self.args.action_dim:].detach().cpu().numpy(),
+            samples.trajectories[:,:,self.args.action_dim:].detach().cpu().numpy().copy(),
             key='observations'
         )
         if plot:
@@ -278,7 +335,7 @@ class DiffusionPolicy:
                         unnormalize_gt.reshape((-1,4))[:,1], 
                         alpha=0.7, s=2)
             plt.scatter(unnormalize_gt[:,0,0], unnormalize_gt[:,0,1], color='red', s=5, label='Start State')
-
+            plt.scatter(unnormalize_gt[:,-1,0], unnormalize_gt[:,-1,1], color='green', s=5, label='End State')
             plt.title(f'Ground Truth')
             plt.xlabel('X')
             plt.ylabel('Y')
@@ -295,12 +352,12 @@ class DiffusionPolicy:
         
         sampled_noise = torch.normal(torch.zeros(sample_shape), std=torch.tensor(1.0)) 
         denoised_samples = sampled_noise.clone().cuda()
-        for step in range(1000):
+        for step in range(self.args.num_train_steps):
             # Perform one denoising step
             with torch.no_grad():
                 print(f"Step {step}")
                 denoised_samples = self.infer_diffusion_step(denoised_samples,
-                                                        condition, 999 - step,
+                                                        condition, self.args.num_train_steps - 1 - step,
                                                         action_dim)
         unnormalize_obs = normalizer.unnormalize(
             denoised_samples[:,:,self.args.action_dim:].detach().cpu().numpy(),
