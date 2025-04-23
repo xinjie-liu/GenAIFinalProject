@@ -23,7 +23,7 @@ class Args:
     """if toggled, `torch.backends.cudnn.deterministic=False`"""
     cuda: bool = True
     """if toggled, cuda will be enabled by default"""
-    track: bool = True
+    track: bool = False
     """if toggled, this experiment will be tracked with Weights and Biases"""
     wandb_project_name: str = "mujoco_tests"
     """the wandb's project name"""
@@ -37,7 +37,7 @@ class Args:
     """the dataset name of the task"""
     algorithm: str = "diffusion"
     """the algorithm to use"""
-    num_runs: int = 10
+    num_runs: int = 1
     """the number of runs for evaluation"""
     action_chunk_size: int = 8
     """the number of actions to take at a time"""
@@ -130,50 +130,47 @@ if __name__ == "__main__":
 
     episodic_reward = []
     global_step = 0
+    acc_reward = 0
 
-    for ii in range(args.num_runs):
-        
-        obs, _ = envs.reset(seed=args.seed)
-        step_along_diffusion_plan = 0
-        diffusion_plan = None
-        while True:
-            obs_tensor = torch.tensor(obs, device=device, dtype=torch.float32)
-            obs_norm = dataset.normalizer.normalize(obs_tensor.cpu(), key='observations')
-            conditions = {0: obs_norm.to(device)}
-
-            if step_along_diffusion_plan % args.action_chunk_size == 0:
-                diffusion_plan = diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)
-                step_along_diffusion_plan = 0
-                actions = diffusion_plan[0, 0, :][None, :]
-                step_along_diffusion_plan += 1
-            else:
-                actions = diffusion_plan[0, step_along_diffusion_plan, :][None, :]
-                step_along_diffusion_plan += 1
-
-            # random actions
-            # actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
-            # TRY NOT TO MODIFY: execute the game and log data.
-            next_obs, rewards, terminations, truncations, infos = envs.step(actions)
-            # Added this to handle both termination and truncation
-            ds = np.logical_or(terminations, truncations)
-            if ds.any():
-                assert len(infos['episode']['r']) == 1, "only one environment is supported"
-                print(f"global_step={global_step}, episodic_return={infos['episode']['r'][0]}")
-                writer.add_scalar("charts/episodic_return", infos['episode']['r'][0], global_step)
-                writer.add_scalar("charts/episodic_length", infos['episode']['l'][0], global_step)
-                episodic_reward.append(infos['episode']['r'][0])
-                break
-            global_step += 1
-
-            # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
-            obs = next_obs
+    # Select a random subset of 30 indices from 0 to 500
+    random_indices = random.sample(range(501), 30)
+    print(f"Selected random indices: {random_indices}")
     
-    print(f"Average episodic reward: {np.mean(episodic_reward)}")
-    writer.add_scalar("charts/average_reward", np.mean(episodic_reward), global_step)
-    envs.close()
-    writer.close()
+    # Sort the indices for better readability
+    sorted_indices = sorted(random_indices)
+    print(f"Sorted random indices: {sorted_indices}")
 
+    generated_samples = []
+    prediction_error_norm = []
 
-
-
-        
+    for ii in sorted_indices:
+        print(f"ii: {ii}")
+        dataset_cond = {0: torch.tensor(dataset[ii].conditions[0], device=device, dtype=torch.float32)}
+        generated_samples.append(diffuser.test_policy_act(dataset_cond, sample_shape, dataset.action_dim, dataset.normalizer))
+        prediction_error_norm.append(np.linalg.norm(generated_samples[-1].cpu().numpy() - dataset[ii].trajectories))
+    
+    # Plot the prediction error norm as a scatter plot
+    import matplotlib.pyplot as plt
+    
+    plt.figure(figsize=(10, 6))
+    plt.scatter(sorted_indices, prediction_error_norm, color='blue', alpha=0.7)
+    plt.xlabel('Dataset Index')
+    plt.ylabel('Prediction Error Norm')
+    plt.title('Prediction Error Norm for Selected Samples')
+    plt.grid(True, linestyle='--', alpha=0.7)
+    
+    # Add a trend line
+    z = np.polyfit(sorted_indices, prediction_error_norm, 1)
+    p = np.poly1d(z)
+    plt.plot(sorted_indices, p(sorted_indices), "r--", alpha=0.7)
+    
+    # Calculate and display average error
+    avg_error = np.mean(prediction_error_norm)
+    plt.axhline(y=avg_error, color='g', linestyle='--', alpha=0.7)
+    plt.text(sorted_indices[-1], avg_error, f'Avg: {avg_error:.4f}', 
+             verticalalignment='bottom', horizontalalignment='right')
+    
+    plt.tight_layout()
+    plt.savefig('prediction_error_scatter.png')
+    print(f"Scatter plot saved as 'prediction_error_scatter.png'")
+    plt.close()

@@ -371,20 +371,26 @@ class DiffusionPolicy:
         )
         return unnormalize_actions
 
-    
-
-#     args = DictConfig(namespace)
-
-    
-#     # Create dataset and dataloader
-#     # _, _, _, _, dataset_, dataset_statistics = generate_diffusion_policy_dataset()
-#     dataset = SequenceDataset(
-#         env = args.env_name,
-#         max_n_episodes=args.max_n_episodes
-#     )
-#     args.horizon = dataset.horizon
-#     args.observation_dim = dataset.observation_dim
-#     args.action_dim = dataset.action_dim
+    def test_policy_act(self, condition, sample_shape, action_dim, normalizer):
+        
+        sampled_noise = torch.normal(torch.zeros(sample_shape), std=torch.tensor(1.0)) 
+        denoised_samples = sampled_noise.clone().cuda()
+        for step in range(1000):
+            # Perform one denoising step
+            with torch.no_grad():
+                print(f"Step {step}")
+                denoised_samples = self.infer_diffusion_step(denoised_samples,
+                                                        condition, 999 - step,
+                                                        action_dim)
+        unnormalize_obs = normalizer.unnormalize(
+            denoised_samples[:,:,self.args.action_dim:].detach().cpu().numpy(),
+            key='observations'
+        )
+        unnormalize_actions = normalizer.unnormalize(
+            denoised_samples[:,:,:action_dim].detach().cpu().numpy(),
+            key='actions'
+        )
+        return denoised_samples
     
 #     # noise = torch.normal(torch.zeros(dataset_shape), std=torch.tensor(1.0))
 
