@@ -4,7 +4,7 @@ import torch
 import pdb
 
 from .preprocessing import get_preprocess_fn
-from .cheetah_d4rl import get_dataset_environment, sequence_dataset, load_env
+from .d4rl import get_dataset_environment, sequence_dataset, load_env
 from .normalizer import DatasetNormalizer
 from .buffer import ReplayBuffer
 
@@ -16,7 +16,7 @@ ValueBatch = namedtuple('ValueBatch', 'trajectories conditions values')
 
 class SequenceDataset(torch.utils.data.Dataset):
 
-    def __init__(self, env='hopper-medium-replay', horizon=64,
+    def __init__(self, env='expert-v0', horizon=64,
         normalizer='GaussianNormalizer', preprocess_fns=[], max_path_length=1000,
         max_n_episodes=20000, termination_penalty=0, use_padding=True, seed=None):
         self.preprocess_fn = get_preprocess_fn(preprocess_fns, env)
@@ -158,7 +158,7 @@ class ValueDataset(SequenceDataset):
 
 if __name__=='__main__':
     dataset = SequenceDataset(
-        env = 'D4RL/pointmaze/umaze-v2'
+        env = 'mujoco/halfcheetah/expert-v0'
     )
     
     print(dataset[0])
