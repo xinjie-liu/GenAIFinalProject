@@ -137,7 +137,10 @@ if __name__ == "__main__":
         step_along_diffusion_plan = 0
         diffusion_plan = None
         while True:
-            conditions = {0: torch.tensor(obs, device=device)}
+            obs_tensor = torch.tensor(obs, device=device, dtype=torch.float32)
+            obs_norm = dataset.normalizer.normalize(obs_tensor.cpu(), key='observations')
+            conditions = {0: obs_norm.to(device)}
+
             if step_along_diffusion_plan % args.action_chunk_size == 0:
                 diffusion_plan = diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)
                 step_along_diffusion_plan = 0
