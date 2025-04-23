@@ -70,13 +70,15 @@ class DiffusionPolicy:
                                            clip_sample=args.clip_sample,
                                            prediction_type=prediction_type
                                            )
-        self.optimizer = optim.Adam(self.net.parameters(), lr=1e-3)  # Optimizer with learning rate
+        self.optimizer = optim.Adam(self.net.parameters(), lr=self.args.lr)  # Optimizer with learning rate
         self.epoch = 0
         self.visualization_step = args.num_train_steps // 10  # Visualize every 100 steps
         # self.loss_weight = self.get_loss_weights(self.args.action_weight,
         #                                          self.args.discount,
         #                                          None
         #                                          )
+        
+        self.args.ckpt_path = args.ckpt_path + '_' + args.tag
         
     def apply_conditioning(self, x, conditions, action_dim):
         for t, val in conditions.items():
@@ -169,7 +171,7 @@ class DiffusionPolicy:
         # Predict noise using the model
         pred_noise = model(noised_samples_cond.cuda(), time_steps.cuda())
         # Calculate MSE loss between predicted and actual noise
-        if seflf.args.predict_epsilon:
+        if self.args.predict_epsilon:
             # If predicting epsilon, compute loss directly on predicted noise
             loss = self.args.loss_factor * (pred_noise - sampled_noise)**2
         else:
