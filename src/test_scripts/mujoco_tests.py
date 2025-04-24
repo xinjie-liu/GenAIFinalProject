@@ -78,7 +78,7 @@ if __name__ == "__main__":
     )
 
     namespace = {
-        'epochs': 100,
+        'epochs': 1000,
         'steps_per_epoch': 1000,
         'train_batch_size': 1024,
         'env_name': args.dataset_name,
