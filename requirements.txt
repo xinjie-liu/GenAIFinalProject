@@ -13,3 +13,7 @@ gymnasium-robotics
 minari[hdf5]
 mujoco
 wandb
+tyro
+hydra-core
+omegaconf
+json
