@@ -10,6 +10,7 @@ import torch
 import tyro
 from torch.utils.tensorboard import SummaryWriter
 from omegaconf import DictConfig
+import json
 from src.datasets.cheetah_sequence_dataset import SequenceDataset
 from src.solvers.diffusionpolicy import DiffusionPolicy, cycle
 
@@ -78,7 +79,7 @@ if __name__ == "__main__":
     )
 
     namespace = {
-        'epochs': 1000,
+        'epochs': 100,
         'steps_per_epoch': 1000,
         'train_batch_size': 1024,
         'env_name': args.dataset_name,
@@ -93,6 +94,8 @@ if __name__ == "__main__":
         'lr': 1e-3,
         'clip_sample': False,
         'loss_factor': 0.1,
+        'predict_epsilon' : False,
+        'ckpt_path': './ckpt/mujoco/halfcheetah/medium-v0'
     }
     diffuser_args = DictConfig(namespace)
     dataset = SequenceDataset(
@@ -115,8 +118,8 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
 
-    diffuser = DiffusionPolicy(diffuser_args)
-    diffuser.net.load_state_dict(torch.load('src/half-cheetah-model'))
+    diffuser = DiffusionPolicy(diffuser_args, predict_epsilon = False)
+    diffuser.net.load_state_dict(torch.load('src/half_cheetah_model'))
     sample_shape = (1,) + dataset[0].trajectories.shape
 
     # env setup
@@ -173,6 +176,20 @@ if __name__ == "__main__":
     envs.close()
     writer.close()
 
+    results = {
+        "experiment_name": args.exp_name,
+        "env_id": args.env_id,
+        "seed": args.seed,
+        "episode_rewards": episodic_reward,
+        "average_reward": float(np.mean(episodic_reward)),  # convert from np.float64
+        "timestamp": int(time.time())
+    }
+
+    # Create output folder if it doesn't exist
+    os.makedirs("results", exist_ok=True)
+
+    with open(f"results/{args.exp_name}_results.json", "w") as f:
+        json.dump(results, f, indent=4)
 
 
 
