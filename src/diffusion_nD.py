@@ -46,7 +46,6 @@ def train(args:DictConfig):
             horizon=args.horizon
         )
     
-    
     with open_dict(args):
         args.horizon = dataset.horizon
         args.observation_dim = dataset.observation_dim
@@ -68,6 +67,11 @@ def train(args:DictConfig):
         diffuser = FlowPolicy(args)
     diffuser.load_model()
     diffuser.train(dataset, dataloader, dataloader_vis)
+
+    torch.save(diffuser.net.state_dict(), "maze_diffusion_policy.pt")
+
+
+    
 
 
 if __name__ == "__main__":
