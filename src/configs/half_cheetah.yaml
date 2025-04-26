@@ -16,3 +16,4 @@ loss_factor: 0
 horizon: 32
 action_weight: 10.0
 predict_epsilon: true
+network: unet

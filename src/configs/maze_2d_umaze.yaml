@@ -8,11 +8,12 @@ seed: 0
 eval_batch: 256
 max_n_episodes: 10000
 ckpt_path: ./ckpt/pointmaze/umaze
-num_train_steps: 1000
+num_train_steps: 50
 beta_schedule: squaredcos_cap_v2
 lr: 1e-3
 clip_sample: false
 loss_factor: 0.1
-horizon: 64
+horizon: 32
 action_weight: 10.0
 predict_epsilon: true
+network: unet
