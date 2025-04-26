@@ -18,6 +18,8 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')
 
 from src.utils.logger import Logger
 from src.networks.unets import TemporalUnet
+from src.networks.attention import DiT
+
 from src.datasets.sequence_dataset import SequenceDataset
 from omegaconf import DictConfig, OmegaConf
 from tqdm import tqdm
@@ -41,12 +43,20 @@ class DiffusionPolicy:
 
 
         # TODO: Generalize network setting for other networks 
-        self.net = TemporalUnet(
-            horizon=args.horizon,
-            transition_dim=args.observation_dim + args.action_dim,
-            cond_dim=args.observation_dim,
-            device= torch.device('cuda:0')
-        ) 
+        if args.network == 'unet':
+            self.net = TemporalUnet(
+                horizon=args.horizon,
+                transition_dim=args.observation_dim + args.action_dim,
+                cond_dim=args.observation_dim,
+                device= torch.device('cuda:0')
+            ) 
+        elif args.network == 'dit':
+            self.net = DiT(
+                horizon=args.horizon,
+                transition_dim=args.observation_dim + args.action_dim,
+                cond_dim=args.observation_dim,
+                device= torch.device('cuda:0')
+            )
         # Set network
         
         self.args = args
@@ -73,10 +83,10 @@ class DiffusionPolicy:
         self.optimizer = optim.Adam(self.net.parameters(), lr=self.args.lr)  # Optimizer with learning rate
         self.epoch = 0
         self.visualization_step = args.num_train_steps // 10  # Visualize every 100 steps
-        # self.loss_weight = self.get_loss_weights(self.args.action_weight,
-        #                                          self.args.discount,
-        #                                          None
-        #                                          )
+        self.loss_weight = self.get_loss_weights(self.args.action_weight,
+                                                 1.0,
+                                                 None
+                                                 )
         
         self.args.ckpt_path = args.ckpt_path + '_' + args.tag
         
@@ -129,7 +139,7 @@ class DiffusionPolicy:
             dim_weights[self.args.action_dim + ind] *= w
 
         ## decay loss with trajectory timestep: discount**t
-        discounts = discount ** torch.arange(self.horizon, dtype=torch.float)
+        discounts = discount ** torch.arange(self.args.horizon, dtype=torch.float)
         discounts = discounts / discounts.mean()
         loss_weights = torch.einsum('h,t->ht', discounts, dim_weights)
 
@@ -173,9 +183,9 @@ class DiffusionPolicy:
         # Calculate MSE loss between predicted and actual noise
         if self.args.predict_epsilon:
             # If predicting epsilon, compute loss directly on predicted noise
-            loss = self.args.loss_factor * (pred_noise - sampled_noise)**2
+            loss = self.args.loss_factor * (pred_noise - sampled_noise)**2*self.loss_weight.unsqueeze(0).unsqueeze(0)*cuda()
         else:
-            loss = self.args.loss_factor * (pred_noise - samples.trajectories.clone().cuda())**2
+            loss = self.args.loss_factor * (pred_noise - samples.trajectories.clone().cuda())**2*self.loss_weight.unsqueeze(0).unsqueeze(0).cuda()
         return loss
 
     def train(self, dataset, dataloader, dataloader_viz):
