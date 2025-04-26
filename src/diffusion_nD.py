@@ -12,8 +12,6 @@ import torch.optim as optim
 
 import torch.utils
 import torch.utils.data
-
-
 from networks.unets import TemporalUnet
 from src.utils.logger import Logger
 from omegaconf import DictConfig, OmegaConf
@@ -64,7 +62,10 @@ def train(args:DictConfig):
             dataset, batch_size=args.eval_batch, num_workers=0, shuffle=True, pin_memory=True
         ))
 
-    diffuser = DiffusionPolicy(args)
+    if args.scheduler == 'DDPM' or args.scheduler == 'DDIM':
+        diffuser = DiffusionPolicy(args)
+    elif args.scheduler == 'Flow':
+        diffuser = FlowPolicy(args)
     diffuser.load_model()
     diffuser.train(dataset, dataloader, dataloader_vis)
 
