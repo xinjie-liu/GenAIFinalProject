@@ -47,6 +47,10 @@ class Args:
     """the number of runs for evaluation"""
     action_chunk_size: int = 8
     """the number of actions to take at a time"""
+    plot_diffusion_plan: bool = False
+    """whether to plot the diffusion plan"""
+    num_diffusion_plans: int = 10
+    """the number of diffusion plans to plot"""
 
 def make_env(env_id, seed, idx, capture_video, run_name):
     def thunk():
@@ -144,6 +148,11 @@ if __name__ == "__main__":
 
             if step_along_diffusion_plan % args.action_chunk_size == 0:
                 diffusion_plan = diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)
+                if args.plot_diffusion_plan:
+                    diffusion_plans = []
+                    for i in range(args.num_diffusion_plans):
+                        diffusion_plans.append(diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer))
+                    # TODO: @Harsif: plot diffusion plans and render a video
                 step_along_diffusion_plan = 0
                 actions = diffusion_plan[0, 0, :][None, :]
                 step_along_diffusion_plan += 1
