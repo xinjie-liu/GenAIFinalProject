@@ -43,7 +43,7 @@ class Args:
     """the config name of the task"""
     algorithm: str = "diffusion"
     """the algorithm to use"""
-    num_runs: int = 10
+    num_runs: int = 1
     """the number of runs for evaluation"""
     action_chunk_size: int = 8
     """the number of actions to take at a time"""
@@ -134,13 +134,21 @@ if __name__ == "__main__":
     envs.single_observation_space.dtype = np.float32
 
     episodic_reward = []
+    
     global_step = 0
 
+    trajectories_across_episodes = []
+
     for ii in range(args.num_runs):
-        
         obs, _ = envs.reset(seed=args.seed)
         step_along_diffusion_plan = 0
         diffusion_plan = None
+
+        episode_data = {    #Episode data to be logged for visualizations
+            "observations": [],
+            "actions": [],
+            "rewards": []
+        }
         while True:
             obs_tensor = torch.tensor(obs["observation"], device=device, dtype=torch.float32)
             obs_norm = dataset.normalizer.normalize(obs_tensor.cpu(), key='observations')
@@ -164,6 +172,10 @@ if __name__ == "__main__":
             # actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, rewards, terminations, truncations, infos = envs.step(actions)
+
+            episode_data["observations"].append(obs["observation"].squeeze(0).tolist())
+            episode_data["actions"].append(actions.squeeze(0).tolist())
+            episode_data["rewards"].append(float(rewards))
             # Added this to handle both termination and truncation
             ds = np.logical_or(terminations, truncations)
             if ds.any():
@@ -177,6 +189,7 @@ if __name__ == "__main__":
 
             # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
             obs = next_obs
+        trajectories_across_episodes.append(episode_data)
     
     print(f"Average episodic reward: {np.mean(episodic_reward)}")
     writer.add_scalar("charts/average_reward", np.mean(episodic_reward), global_step)
@@ -197,6 +210,11 @@ if __name__ == "__main__":
 
     with open(f"results/{args.exp_name}_results.json", "w") as f:
         json.dump(results, f, indent=4)
+
+    # Create trajectories folder if it doesn't exist
+    os.makedirs("trajectories", exist_ok=True)
+    with open(f"trajectories/{args.exp_name}_trajectories.json", "w") as f:
+        json.dump(trajectories_across_episodes, f, indent=4)
 
 
 
