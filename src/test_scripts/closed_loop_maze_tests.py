@@ -43,7 +43,7 @@ class Args:
     """the config name of the task"""
     algorithm: str = "diffusion"
     """the algorithm to use"""
-    num_runs: int = 1
+    num_runs: int = 10
     """the number of runs for evaluation"""
     action_chunk_size: int = 8
     """the number of actions to take at a time"""
@@ -64,6 +64,47 @@ def make_env(env_id, seed, idx, capture_video, run_name):
         return env
 
     return thunk
+
+def is_valid_trajectory(trajectory, maze_map, invalid_counter, xbounds, ybounds):
+    xmin, xmax = xbounds[0], xbounds[1]
+    ymin, ymax = ybounds[1], ybounds[0]
+    
+    maze_height = len(maze_map)      # Number of rows (height of the maze)
+    maze_width = len(maze_map[0])    # Number of columns (width of the maze)
+
+
+    wall_positions = set()
+    for row in range(maze_height):
+        for col in range(maze_width):
+            if maze_map[row][col] == 1:
+                wall_positions.add((row, col))
+
+
+    for i in range(len(trajectory)):
+        x = trajectory[i][0]
+        y = trajectory[i][1]
+        # Convert the continuous (x, y) coordinates into grid indices for the maze
+        scale_x = (x - xmin) / (xmax - xmin) * (maze_width - 1)
+        scale_y = (y - ymin) / (ymax - ymin) * (maze_height - 1)
+
+        # Round the scaled values to get grid indices (since maze_map is a discrete grid)
+        col = round(scale_x)  # x-coordinate (column)
+        row = round(scale_y)  # y-coordinate (row)
+
+        if (scale_y, scale_x) in wall_positions:
+
+            invalid_counter += 1
+            return invalid_counter  # Out of bounds is invalid
+
+        # Ensure the indices are within the bounds of the maze map
+        if row < 0 or row >= maze_height or col < 0 or col >= maze_width:
+            invalid_counter += 1
+            return invalid_counter  # Out of bounds is invalid
+    
+
+    return invalid_counter  # If the trajectory passed all checks, it's valid
+
+
 
 if __name__ == "__main__":
 
@@ -137,6 +178,8 @@ if __name__ == "__main__":
     
     global_step = 0
 
+    invalid_counter = 0
+
     trajectories_across_episodes = []
 
     for ii in range(args.num_runs):
@@ -189,9 +232,34 @@ if __name__ == "__main__":
 
             # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
             obs = next_obs
+        
+
+        if 'umaze' in args.dataset_name: 
+            maze_map =  [[1, 1, 1, 1, 1], [1, 0, 0, 0, 1], [1, 1, 1, 0, 1], [1, 0, 0, 0, 1], [1, 1, 1, 1, 1]]
+            xbound = (-2.5,2.5)
+            ybound = (-2.5,2.5)
+            invalid_counter = is_valid_trajectory(episode_data['observations'], maze_map, invalid_counter, xbound, ybound)
+        
+        if 'medium' in args.dataset_name: 
+            maze_map = [[1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 1, 1, 0, 0, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 1, 0, 0, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 0, 0, 1, 0, 1], [1, 0, 0, 0, 1, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1]]
+            xbound = (-4,4)
+            ybound = (-4,4)
+            invalid_counter = is_valid_trajectory(episode_data['observations'], maze_map, invalid_counter, xbound, ybound)
+
+        if 'large' in args.dataset_name: 
+            maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1], [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1], [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1], [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1], [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]
+            xbound = (-6, 6)
+            ybound = (-4.5, 4.5)
+            invalid_counter = is_valid_trajectory(episode_data['observations'], maze_map, invalid_counter, xbound, ybound)
+        
+        
+        
         trajectories_across_episodes.append(episode_data)
+
+    perc_valid_traj = ((args.num_runs - invalid_counter) / (args.num_runs)) * 100
     
     print(f"Average episodic reward: {np.mean(episodic_reward)}")
+    print(f"Percent valid trajectories: {perc_valid_traj}")
     writer.add_scalar("charts/average_reward", np.mean(episodic_reward), global_step)
     envs.close()
     writer.close()
@@ -202,6 +270,7 @@ if __name__ == "__main__":
         "seed": args.seed,
         "episode_rewards": episodic_reward,
         "average_reward": float(np.mean(episodic_reward)),  # convert from np.float64
+        "Percent_valid_trajectories": perc_valid_traj,
         "timestamp": int(time.time())
     }
 
