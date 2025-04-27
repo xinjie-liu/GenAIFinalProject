@@ -19,6 +19,8 @@ from src.datasets.sequence_dataset import SequenceDataset
 from src.solvers.diffusionpolicy import DiffusionPolicy, cycle
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
+import pickle
+
 @dataclass
 class Args:
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
@@ -245,6 +247,27 @@ if __name__ == "__main__":
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
+    if 'umaze' in args.dataset_name: 
+        maze_map =  [[1, 1, 1, 1, 1], [1, 0, 0, 0, 1], [1, 1, 1, 0, 1], [1, 0, 0, 0, 1], [1, 1, 1, 1, 1]]
+        xbound = (-2.5,2.5)
+        ybound = (-2.5,2.5)
+        action_dim = 2
+        observation_dim = 4
+    
+    if 'medium' in args.dataset_name: 
+        maze_map = [[1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 1, 1, 0, 0, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 1, 0, 0, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 0, 0, 1, 0, 1], [1, 0, 0, 0, 1, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1]]
+        xbound = (-4,4)
+        ybound = (-4,4)
+        action_dim = 2
+        observation_dim = 4
+
+    if 'large' in args.dataset_name: 
+        maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1], [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1], [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1], [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1], [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]
+        xbound = (-6, 6)
+        ybound = (-4.5, 4.5)
+        action_dim = 2
+        observation_dim = 4
+
     # Load configuration from YAML file using Hydra
     hydra.initialize(config_path="../configs")
     diffuser_args = compose(config_name=args.config_name)
@@ -254,20 +277,46 @@ if __name__ == "__main__":
     diffuser_args.env_name = args.dataset_name
     diffuser_args.seed = args.seed
 
-    dataset = SequenceDataset(
-        env = diffuser_args.env_name,
-        max_n_episodes=1000#diffuser_args.max_n_episodes
-    )
+    # Check if there's a saved normalizer
+    normalizer_path = os.path.join(diffuser_args.ckpt_path, 'normalizer.pkl')
     
-    # Add observation_dim to diffuser_args using open_dict context
-    with open_dict(diffuser_args):
-        # diffuser_args.horizon = args.plan_horizon # dataset.horizon
-        diffuser_args.observation_dim = dataset.observation_dim
-        diffuser_args.action_dim = dataset.action_dim
+    # Try to load the normalizer if it exists
+    normalizer = None
+    if os.path.exists(normalizer_path):
+        try:
+            print(f"Loading normalizer from {normalizer_path}")
+            with open(normalizer_path, 'rb') as f:
+                normalizer = pickle.load(f)
+            print("Successfully loaded normalizer")
+        except Exception as e:
+            print(f"Error loading normalizer: {e}")
+            normalizer = None
+    
+    # Create dataset with the loaded normalizer if available
+    if normalizer is not None:
+        # Use the loaded normalizer directly, no need to create a dataset
+        print("Using loaded normalizer without creating a dataset")
+    else:
+        # If no normalizer exists or loading failed, create a new dataset with a new normalizer
+        print(f"No valid normalizer found, creating a new dataset to get normalizer")
+        dataset = SequenceDataset(
+            env=diffuser_args.env_name,
+            max_n_episodes=1000
+        )
         
-    # dataloader_vis = cycle(torch.utils.data.DataLoader(
-    #         dataset, batch_size=diffuser_args.eval_batch, num_workers=0, shuffle=True, pin_memory=True
-    #     ))
+        # Save the normalizer
+        normalizer = dataset.normalizer
+        os.makedirs(os.path.dirname(normalizer_path), exist_ok=True)
+        with open(normalizer_path, 'wb') as f:
+            pickle.dump(normalizer, f)
+        print(f"Saved normalizer to {normalizer_path}")
+        
+    # Update diffuser_args with dimensions from dataset
+    with open_dict(diffuser_args):
+        diffuser_args.observation_dim = observation_dim
+        diffuser_args.action_dim = action_dim
+    
+    # Now normalizer is either loaded from file or newly created with dataset
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -279,7 +328,7 @@ if __name__ == "__main__":
 
     diffuser = DiffusionPolicy(diffuser_args, predict_epsilon = False)
     diffuser.load_model()
-    sample_shape = (1, diffuser_args.horizon, dataset[0].trajectories.shape[-1])
+    sample_shape = (1, diffuser_args.horizon, action_dim+observation_dim)
     # sample_shape = (1,) + dataset[0].trajectories.shape
 
     # env setup
@@ -299,20 +348,7 @@ if __name__ == "__main__":
 
     trajectories_across_episodes = []
 
-    if 'umaze' in args.dataset_name: 
-        maze_map =  [[1, 1, 1, 1, 1], [1, 0, 0, 0, 1], [1, 1, 1, 0, 1], [1, 0, 0, 0, 1], [1, 1, 1, 1, 1]]
-        xbound = (-2.5,2.5)
-        ybound = (-2.5,2.5)
-    
-    if 'medium' in args.dataset_name: 
-        maze_map = [[1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 1, 1, 0, 0, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 1, 0, 0, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 0, 0, 1, 0, 1], [1, 0, 0, 0, 1, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1]]
-        xbound = (-4,4)
-        ybound = (-4,4)
 
-    if 'large' in args.dataset_name: 
-        maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1], [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1], [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1], [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1], [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]
-        xbound = (-6, 6)
-        ybound = (-4.5, 4.5)
 
     for ii in range(args.num_runs):
         obs, _ = envs.reset(seed=args.seed)
@@ -320,6 +356,8 @@ if __name__ == "__main__":
         diffusion_plan = None
         start_obs = copy.deepcopy(obs["observation"].squeeze(0))
         goal = copy.deepcopy(obs["desired_goal"].squeeze(0))
+        print("start_obs", start_obs)
+        print("goal", goal)
 
         episode_data = {    #Episode data to be logged for visualizations
             "observations": [],
@@ -330,29 +368,31 @@ if __name__ == "__main__":
         plt_fig = None
         while True:
             obs_tensor = torch.tensor(obs["observation"], device=device, dtype=torch.float32)
-            obs_norm = dataset.normalizer.normalize(obs_tensor.cpu(), key='observations')
+            obs_norm = normalizer.normalize(obs_tensor.cpu(), key='observations')
             conditions = {0: obs_norm.to(device)}
 
             if step_along_diffusion_plan % args.action_chunk_size == 0:
-                diffusion_plan, state_plan, normalize_actions, normalize_obs = diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)
+                diffusion_plan, state_plan, normalize_actions, normalize_obs = diffuser.policy_act(conditions, sample_shape, action_dim, normalizer)
                 print("normalize_obs", normalize_obs[:, -1, :])
                 conditions = {0: normalize_obs[:, -1, :]}
                 if args.num_diffusion_segments > 2:
                     for seg_ii in range(args.num_diffusion_segments - 2):
                         print("conditions", conditions)
-                        diffusion_plan_, state_plan_, normalize_actions, normalize_obs = diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)
+                        diffusion_plan_, state_plan_, normalize_actions, normalize_obs = diffuser.policy_act(conditions, sample_shape, action_dim, normalizer)
                         diffusion_plan = np.concatenate((diffusion_plan, diffusion_plan_), axis=1)
                         state_plan = np.concatenate((state_plan, state_plan_), axis=1)
                         print("normalize_obs", normalize_obs[:, -1, :])
                         conditions = {0: normalize_obs[:, -1, :]}
                 if args.num_diffusion_segments > 1:
-                    goal_norm = dataset.normalizer.normalize(np.concatenate((goal, np.array([0.1, 0.1])), axis=0), key='observations')
+                    goal_norm = normalizer.normalize(np.concatenate((goal, np.array([0.1, 0.1])), axis=0), key='observations')
                     print("conditions", conditions)
-                    diffusion_plan_, state_plan_, normalize_actions, normalize_obs = diffuser.policy_act_final(conditions, sample_shape, dataset.action_dim, dataset.normalizer, goal = torch.tensor(goal_norm[:2], device=device))
+                    diffusion_plan_, state_plan_, normalize_actions, normalize_obs = diffuser.policy_act_final(conditions, sample_shape, action_dim, normalizer, goal = torch.tensor(goal_norm[:2], device=device))
                     diffusion_plan = np.concatenate((diffusion_plan, diffusion_plan_), axis=1)
                     state_plan = np.concatenate((state_plan, state_plan_), axis=1)
                 
                 if episode_step == 0:
+                    print("start_obs", start_obs)
+                    print("goal", goal)
                     plt_fig = plot_trajectory_plan(start_obs, goal, state_plan, ii, maze_map, xbound, ybound)
                 else:
                     plt_fig = continue_plot_trajectory_plan(plt_fig, start_obs, goal, state_plan, ii)
@@ -360,8 +400,8 @@ if __name__ == "__main__":
                 if args.plot_diffusion_plan:
                     diffusion_plans = []
                     for i in range(args.num_diffusion_plans):
-                        diffusion_plans.append(diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)[0])
-                    # TODO: @Harsif: plot diffusion plans and render a video
+                        diffusion_plans.append(diffuser.policy_act(conditions, sample_shape, action_dim, normalizer)[0])
+                    # TODO: @Hasif: plot diffusion plans and render a video
                 step_along_diffusion_plan = 0
                 actions = diffusion_plan[0, 0, :][None, :]
                 step_along_diffusion_plan += 1
