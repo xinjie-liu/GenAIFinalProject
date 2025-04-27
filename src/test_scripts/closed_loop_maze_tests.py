@@ -1,4 +1,5 @@
 import os, sys
+import copy
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
 import random
 import time
@@ -16,6 +17,7 @@ from hydra.compose import compose
 import json
 from src.datasets.sequence_dataset import SequenceDataset
 from src.solvers.diffusionpolicy import DiffusionPolicy, cycle
+import matplotlib.pyplot as plt
 
 @dataclass
 class Args:
@@ -45,20 +47,22 @@ class Args:
     """the algorithm to use"""
     num_runs: int = 10
     """the number of runs for evaluation"""
-    action_chunk_size: int = 8
+    action_chunk_size: int = 1000
     """the number of actions to take at a time"""
+    plan_horizon: int = 384
+    """the number of steps to plan for"""
     plot_diffusion_plan: bool = False
     """whether to plot the diffusion plan"""
     num_diffusion_plans: int = 10
     """the number of diffusion plans to plot"""
 
-def make_env(env_id, seed, idx, capture_video, run_name):
+def make_env(env_id, seed, idx, capture_video, run_name, max_episode_steps):
     def thunk():
         if capture_video and idx == 0:
-            env = gym.make(env_id, render_mode="rgb_array")
+            env = gym.make(env_id, render_mode="rgb_array", max_episode_steps=max_episode_steps, continuing_task = False, reset_target = False)
             env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
         else:
-            env = gym.make(env_id)
+            env = gym.make(env_id, max_episode_steps=max_episode_steps, continuing_task = False, reset_target = False)
         env = gym.wrappers.RecordEpisodeStatistics(env)
         env.action_space.seed(seed)
         return env
@@ -104,7 +108,75 @@ def is_valid_trajectory(trajectory, maze_map, invalid_counter, xbounds, ybounds)
 
     return invalid_counter  # If the trajectory passed all checks, it's valid
 
+# Function to plot and save trajectory plan
+def plot_trajectory_plan(start_obs, goal, state_plan, run_id):
+    """
+    Plot and save a figure of the start observation, goal, and state plan.
+    
+    Args:
+        start_obs: The starting observation (position)
+        goal: The goal position (if available)
+        state_plan: The planned trajectory states
+        step: Current global step for filename
+    """
+    # Create a figure for plotting the plan
+    plt.figure(figsize=(10, 8))
+    
+    # Plot state plan (positions only - first two dimensions)
+    plt.scatter(state_plan[0, :, 0], state_plan[0, :, 1], s=5, alpha=0.7, label='Planned trajectory', c='blue')
+    
+    # Plot start position
+    plt.scatter(start_obs[0], start_obs[1], s=100, c='green', marker='o', label='Start position')
+    
+    # Plot goal position if available
+    if goal is not None:
+        plt.scatter(goal[0], goal[1], s=100, c='red', marker='*', label='Goal position')
+    
+    # Add labels and legend
+    plt.title('Diffusion Policy Trajectory Plan')
+    plt.xlabel('X position')
+    plt.ylabel('Y position')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    
+    # Save the figure
+    os.makedirs("trajectory_plots", exist_ok=True)
+    # plt.savefig(f"trajectory_plots/trajectory_plan_run_{run_id}.png")
+    # plt.close()
+    return plt
 
+def plot_closed_loop_trajectory(plt_fig, observations, run_id):
+    """
+    Plot the actual closed loop trajectory on top of the planned trajectory and save the figure.
+    
+    Args:
+        plt_fig: The matplotlib figure with the planned trajectory
+        observations: Array of actual observations from the environment
+        run_id: Run identifier for filename
+    """
+    if plt_fig is None:
+        plt_fig = plt.figure(figsize=(10, 8))
+    
+    # Get the first and last positions for clearer visualization
+    start_pos = observations[0][:2]  # First two dimensions are positions
+    end_pos = observations[-1][:2]
+    
+    # Plot the actual trajectory with both a line for clarity and dots for comparison
+    plt_fig.gca().plot(observations[:, 0], observations[:, 1], 'r-', linewidth=1, alpha=0.5)
+    plt_fig.gca().scatter(observations[:, 0], observations[:, 1], s=10, c='red', alpha=0.7, label='Actual trajectory')
+    
+    # Highlight start and end of actual trajectory
+    plt_fig.gca().scatter(start_pos[0], start_pos[1], s=100, c='darkgreen', marker='o', label='Actual start')
+    plt_fig.gca().scatter(end_pos[0], end_pos[1], s=100, c='darkred', marker='x', label='Actual end')
+    
+    # Update the title and legend
+    plt_fig.gca().set_title('Planned vs Actual Trajectory')
+    plt_fig.gca().legend()
+    
+    # Save the combined figure
+    os.makedirs("trajectory_plots", exist_ok=True)
+    plt_fig.savefig(f"trajectory_plots/combined_trajectory_run_{run_id}.png")
+    plt_fig.close()
 
 if __name__ == "__main__":
 
@@ -139,12 +211,12 @@ if __name__ == "__main__":
 
     dataset = SequenceDataset(
         env = diffuser_args.env_name,
-        max_n_episodes=diffuser_args.max_n_episodes
+        max_n_episodes=500
     )
     
     # Add observation_dim to diffuser_args using open_dict context
     with open_dict(diffuser_args):
-        diffuser_args.horizon = dataset.horizon
+        diffuser_args.horizon = args.plan_horizon # dataset.horizon
         diffuser_args.observation_dim = dataset.observation_dim
         diffuser_args.action_dim = dataset.action_dim
         
@@ -160,14 +232,14 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
-
     diffuser = DiffusionPolicy(diffuser_args, predict_epsilon = False)
     diffuser.load_model()
-    sample_shape = (1,) + dataset[0].trajectories.shape
+    sample_shape = (1, args.plan_horizon, dataset[0].trajectories.shape[-1])
+    # sample_shape = (1,) + dataset[0].trajectories.shape
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, args.seed + i, i, args.capture_video, run_name) for i in range(1)]
+        [make_env(args.env_id, args.seed + i, i, args.capture_video, run_name, args.plan_horizon) for i in range(1)]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
@@ -186,23 +258,31 @@ if __name__ == "__main__":
         obs, _ = envs.reset(seed=args.seed)
         step_along_diffusion_plan = 0
         diffusion_plan = None
+        start_obs = copy.deepcopy(obs["observation"].squeeze(0))
+        goal = copy.deepcopy(obs["desired_goal"].squeeze(0))
 
         episode_data = {    #Episode data to be logged for visualizations
             "observations": [],
             "actions": [],
             "rewards": []
         }
+        episode_step = 0
+        plt_fig = None
         while True:
             obs_tensor = torch.tensor(obs["observation"], device=device, dtype=torch.float32)
             obs_norm = dataset.normalizer.normalize(obs_tensor.cpu(), key='observations')
             conditions = {0: obs_norm.to(device)}
 
             if step_along_diffusion_plan % args.action_chunk_size == 0:
-                diffusion_plan = diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)
+                diffusion_plan, state_plan = diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)
+                
+                if episode_step == 0:
+                    plt_fig = plot_trajectory_plan(start_obs, goal, state_plan, ii)
+
                 if args.plot_diffusion_plan:
                     diffusion_plans = []
                     for i in range(args.num_diffusion_plans):
-                        diffusion_plans.append(diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer))
+                        diffusion_plans.append(diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)[0])
                     # TODO: @Harsif: plot diffusion plans and render a video
                 step_along_diffusion_plan = 0
                 actions = diffusion_plan[0, 0, :][None, :]
@@ -215,7 +295,7 @@ if __name__ == "__main__":
             # actions = np.array([envs.single_action_space.sample() for _ in range(envs.num_envs)])
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, rewards, terminations, truncations, infos = envs.step(actions)
-
+            episode_step += 1
             episode_data["observations"].append(obs["observation"].squeeze(0).tolist())
             episode_data["actions"].append(actions.squeeze(0).tolist())
             episode_data["rewards"].append(float(rewards))
@@ -252,9 +332,8 @@ if __name__ == "__main__":
             ybound = (-4.5, 4.5)
             invalid_counter = is_valid_trajectory(episode_data['observations'], maze_map, invalid_counter, xbound, ybound)
         
-        
-        
         trajectories_across_episodes.append(episode_data)
+        plot_closed_loop_trajectory(plt_fig, np.stack(episode_data["observations"]), ii)
 
     perc_valid_traj = ((args.num_runs - invalid_counter) / (args.num_runs)) * 100
     
