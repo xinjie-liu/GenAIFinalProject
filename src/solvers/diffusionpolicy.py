@@ -112,9 +112,9 @@ class DiffusionPolicy:
             self.epoch = 0
             return
         checkpoint = torch.load(os.path.join(self.args.ckpt_path, 'checkpoint.pth'), weights_only=True)  # Security measure [4][5]
-        self.net.load_state_dict(checkpoint)
-        # self.optimizer.load_state_dict(checkpoint['optimzer_state_dict'])
-        # self.epoch = checkpoint['epoch']
+        self.net.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimzer_state_dict'])
+        self.epoch = checkpoint['epoch']
 
 
     def get_loss_weights(self, action_weight, discount, weights_dict):
@@ -367,7 +367,7 @@ class DiffusionPolicy:
         for step in range(self.args.num_train_steps):
             # Perform one denoising step
             with torch.no_grad():
-                print(f"Step {step}")
+                # print(f"Step {step}")
                 denoised_samples = self.infer_diffusion_step(denoised_samples,
                                                         condition, self.args.num_train_steps - 1 - step,
                                                         action_dim)
@@ -379,7 +379,30 @@ class DiffusionPolicy:
             denoised_samples[:,:,:action_dim].detach().cpu().numpy(),
             key='actions'
         )
-        return unnormalize_actions, unnormalize_obs
+        return unnormalize_actions, unnormalize_obs, denoised_samples[:,:,:action_dim].detach(), denoised_samples[:,:,self.args.action_dim:].detach()
+    
+    def policy_act_final(self, condition, sample_shape, action_dim, normalizer, goal):
+        
+        sampled_noise = torch.normal(torch.zeros(sample_shape), std=torch.tensor(1.0)) 
+        denoised_samples = sampled_noise.clone().cuda()
+        for step in range(self.args.num_train_steps):
+            # Perform one denoising step
+            with torch.no_grad():
+                print(f"Step {step}")
+                denoised_samples = self.infer_diffusion_step(denoised_samples,
+                                                        condition, self.args.num_train_steps - 1 - step,
+                                                        action_dim)
+                denoised_samples[:,-1,:2] = goal
+                
+        unnormalize_obs = normalizer.unnormalize(
+            denoised_samples[:,:,self.args.action_dim:].detach().cpu().numpy(),
+            key='observations'
+        )
+        unnormalize_actions = normalizer.unnormalize(
+            denoised_samples[:,:,:action_dim].detach().cpu().numpy(),
+            key='actions'
+        )
+        return unnormalize_actions, unnormalize_obs, denoised_samples[:,:,:action_dim].detach(), denoised_samples[:,:,self.args.action_dim:].detach()
 
     def test_policy_act(self, condition, sample_shape, action_dim, normalizer):
         

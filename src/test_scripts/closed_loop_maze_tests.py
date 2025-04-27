@@ -37,21 +37,23 @@ class Args:
     """the entity (team) of wandb's project"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
-    env_id: str = "PointMaze_LargeDense-v3"
+    env_id: str = "PointMaze_MediumDense-v3"
     """the environment id of the task"""
-    dataset_name: str = 'D4RL/pointmaze/large-dense-v2'
+    dataset_name: str = 'D4RL/pointmaze/medium-dense-v2'
     """the dataset name of the task"""
-    config_name: str = "maze_2d_large_dense.yaml"
+    config_name: str = "maze_2d_medium_dense.yaml"
     """the config name of the task"""
     algorithm: str = "diffusion"
     """the algorithm to use"""
     num_runs: int = 10
     """the number of runs for evaluation"""
-    action_chunk_size: int = 64
+    action_chunk_size: int = 15
     """the number of actions to take at a time"""
-    plan_horizon: int = 64
-    """the number of steps to plan for"""
-    episode_length: int = 300
+    num_diffusion_segments: int = 1
+    """the number of diffusion segments to use"""
+    # plan_horizon: int = 64
+    # """the number of steps to plan for"""
+    episode_length: int = 200
     """the number of steps to run the episode for"""
     plot_diffusion_plan: bool = False
     """whether to plot the diffusion plan"""
@@ -234,12 +236,12 @@ if __name__ == "__main__":
 
     dataset = SequenceDataset(
         env = diffuser_args.env_name,
-        max_n_episodes=500
+        max_n_episodes=1000#diffuser_args.max_n_episodes
     )
     
     # Add observation_dim to diffuser_args using open_dict context
     with open_dict(diffuser_args):
-        diffuser_args.horizon = args.plan_horizon # dataset.horizon
+        # diffuser_args.horizon = args.plan_horizon # dataset.horizon
         diffuser_args.observation_dim = dataset.observation_dim
         diffuser_args.action_dim = dataset.action_dim
         
@@ -257,7 +259,7 @@ if __name__ == "__main__":
 
     diffuser = DiffusionPolicy(diffuser_args, predict_epsilon = False)
     diffuser.load_model()
-    sample_shape = (1, args.plan_horizon, dataset[0].trajectories.shape[-1])
+    sample_shape = (1, diffuser_args.horizon, dataset[0].trajectories.shape[-1])
     # sample_shape = (1,) + dataset[0].trajectories.shape
 
     # env setup
@@ -297,7 +299,24 @@ if __name__ == "__main__":
             conditions = {0: obs_norm.to(device)}
 
             if step_along_diffusion_plan % args.action_chunk_size == 0:
-                diffusion_plan, state_plan = diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)
+                diffusion_plan, state_plan, normalize_actions, normalize_obs = diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)
+                print("normalize_obs", normalize_obs[:, -1, :])
+                conditions = {0: normalize_obs[:, -1, :]}
+                if args.num_diffusion_segments > 2:
+                    for seg_ii in range(args.num_diffusion_segments - 2):
+                        print("conditions", conditions)
+                        diffusion_plan_, state_plan_, normalize_actions, normalize_obs = diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)
+                        diffusion_plan = np.concatenate((diffusion_plan, diffusion_plan_), axis=1)
+                        state_plan = np.concatenate((state_plan, state_plan_), axis=1)
+                        print("normalize_obs", normalize_obs[:, -1, :])
+                        conditions = {0: normalize_obs[:, -1, :]}
+                if args.num_diffusion_segments > 1:
+                    goal_norm = dataset.normalizer.normalize(np.concatenate((goal, np.array([0.1, 0.1])), axis=0), key='observations')
+                    print("conditions", conditions)
+                    diffusion_plan_, state_plan_, normalize_actions, normalize_obs = diffuser.policy_act_final(conditions, sample_shape, dataset.action_dim, dataset.normalizer, goal = torch.tensor(goal_norm[:2], device=device))
+                    diffusion_plan = np.concatenate((diffusion_plan, diffusion_plan_), axis=1)
+                    state_plan = np.concatenate((state_plan, state_plan_), axis=1)
+                
                 if episode_step == 0:
                     plt_fig = plot_trajectory_plan(start_obs, goal, state_plan, ii)
                 else:
