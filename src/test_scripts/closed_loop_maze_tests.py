@@ -18,7 +18,7 @@ import json
 from src.datasets.sequence_dataset import SequenceDataset
 from src.solvers.diffusionpolicy import DiffusionPolicy, cycle
 import matplotlib.pyplot as plt
-
+import matplotlib.patches as patches
 @dataclass
 class Args:
     exp_name: str = os.path.basename(__file__)[: -len(".py")]
@@ -113,7 +113,7 @@ def is_valid_trajectory(trajectory, maze_map, invalid_counter, xbounds, ybounds)
     return invalid_counter  # If the trajectory passed all checks, it's valid
 
 # Function to plot and save trajectory plan
-def plot_trajectory_plan(start_obs, goal, state_plan, run_id):
+def plot_trajectory_plan(start_obs, goal, state_plan, run_id, maze_map, xbounds, ybounds):
     """
     Plot and save a figure of the start observation, goal, and state plan.
     
@@ -123,9 +123,29 @@ def plot_trajectory_plan(start_obs, goal, state_plan, run_id):
         state_plan: The planned trajectory states
         step: Current global step for filename
     """
-    # Create a figure for plotting the plan
-    plt.figure(figsize=(10, 8))
+    # Create a figure for plotting the plan with an axis object
+    fig, ax = plt.subplots(figsize=(10, 8))
     
+    maze = np.array(maze_map)
+
+    # Size of each cell
+    cell_size = 1
+
+    # Draw the walls
+    rows, cols = maze.shape
+    for y in range(rows):
+        for x in range(cols):
+            if maze[y, x] == 1:
+                wall = patches.Rectangle((x * cell_size + xbounds[0], (rows - y - 1) * cell_size + ybounds[0]),
+                                        width=cell_size, height=cell_size,
+                                        facecolor='black')
+                ax.add_patch(wall)
+
+    # # Set plot limits and appearance
+    # ax.set_xlim(0, cols * cell_size)
+    # ax.set_ylim(0, rows * cell_size)
+    # ax.set_aspect('equal')
+
     # Plot state plan (positions only - first two dimensions)
     plt.scatter(state_plan[0, :, 0], state_plan[0, :, 1], s=5, alpha=0.7, label='Planned trajectory', c='blue')
     
@@ -147,7 +167,7 @@ def plot_trajectory_plan(start_obs, goal, state_plan, run_id):
     os.makedirs("trajectory_plots", exist_ok=True)
     # plt.savefig(f"trajectory_plots/trajectory_plan_run_{run_id}.png")
     # plt.close()
-    return plt
+    return fig
 
 # Function to plot and save trajectory plan
 def continue_plot_trajectory_plan(plt_fig, start_obs, goal, state_plan, run_id):
@@ -201,7 +221,7 @@ def plot_closed_loop_trajectory(plt_fig, observations, run_id):
     # Save the combined figure
     os.makedirs("trajectory_plots", exist_ok=True)
     plt_fig.savefig(f"trajectory_plots/combined_trajectory_run_{run_id}.png")
-    plt_fig.close()
+    # plt_fig.close()
 
 if __name__ == "__main__":
 
@@ -245,9 +265,9 @@ if __name__ == "__main__":
         diffuser_args.observation_dim = dataset.observation_dim
         diffuser_args.action_dim = dataset.action_dim
         
-    dataloader_vis = cycle(torch.utils.data.DataLoader(
-            dataset, batch_size=diffuser_args.eval_batch, num_workers=0, shuffle=True, pin_memory=True
-        ))
+    # dataloader_vis = cycle(torch.utils.data.DataLoader(
+    #         dataset, batch_size=diffuser_args.eval_batch, num_workers=0, shuffle=True, pin_memory=True
+    #     ))
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -278,6 +298,21 @@ if __name__ == "__main__":
     invalid_counter = 0
 
     trajectories_across_episodes = []
+
+    if 'umaze' in args.dataset_name: 
+        maze_map =  [[1, 1, 1, 1, 1], [1, 0, 0, 0, 1], [1, 1, 1, 0, 1], [1, 0, 0, 0, 1], [1, 1, 1, 1, 1]]
+        xbound = (-2.5,2.5)
+        ybound = (-2.5,2.5)
+    
+    if 'medium' in args.dataset_name: 
+        maze_map = [[1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 1, 1, 0, 0, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 1, 0, 0, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 0, 0, 1, 0, 1], [1, 0, 0, 0, 1, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1]]
+        xbound = (-4,4)
+        ybound = (-4,4)
+
+    if 'large' in args.dataset_name: 
+        maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1], [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1], [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1], [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1], [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]
+        xbound = (-6, 6)
+        ybound = (-4.5, 4.5)
 
     for ii in range(args.num_runs):
         obs, _ = envs.reset(seed=args.seed)
@@ -318,7 +353,7 @@ if __name__ == "__main__":
                     state_plan = np.concatenate((state_plan, state_plan_), axis=1)
                 
                 if episode_step == 0:
-                    plt_fig = plot_trajectory_plan(start_obs, goal, state_plan, ii)
+                    plt_fig = plot_trajectory_plan(start_obs, goal, state_plan, ii, maze_map, xbound, ybound)
                 else:
                     plt_fig = continue_plot_trajectory_plan(plt_fig, start_obs, goal, state_plan, ii)
 
@@ -356,24 +391,7 @@ if __name__ == "__main__":
             # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
             obs = next_obs
         
-
-        if 'umaze' in args.dataset_name: 
-            maze_map =  [[1, 1, 1, 1, 1], [1, 0, 0, 0, 1], [1, 1, 1, 0, 1], [1, 0, 0, 0, 1], [1, 1, 1, 1, 1]]
-            xbound = (-2.5,2.5)
-            ybound = (-2.5,2.5)
-            invalid_counter = is_valid_trajectory(episode_data['observations'], maze_map, invalid_counter, xbound, ybound)
-        
-        if 'medium' in args.dataset_name: 
-            maze_map = [[1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 1, 1, 0, 0, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 1, 0, 0, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 0, 0, 1, 0, 1], [1, 0, 0, 0, 1, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1]]
-            xbound = (-4,4)
-            ybound = (-4,4)
-            invalid_counter = is_valid_trajectory(episode_data['observations'], maze_map, invalid_counter, xbound, ybound)
-
-        if 'large' in args.dataset_name: 
-            maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1], [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1], [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1], [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1], [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]
-            xbound = (-6, 6)
-            ybound = (-4.5, 4.5)
-            invalid_counter = is_valid_trajectory(episode_data['observations'], maze_map, invalid_counter, xbound, ybound)
+        invalid_counter = is_valid_trajectory(episode_data['observations'], maze_map, invalid_counter, xbound, ybound)
         
         trajectories_across_episodes.append(episode_data)
         plot_closed_loop_trajectory(plt_fig, np.stack(episode_data["observations"]), ii)
