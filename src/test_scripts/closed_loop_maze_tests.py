@@ -47,10 +47,12 @@ class Args:
     """the algorithm to use"""
     num_runs: int = 10
     """the number of runs for evaluation"""
-    action_chunk_size: int = 1000
+    action_chunk_size: int = 64
     """the number of actions to take at a time"""
-    plan_horizon: int = 384
+    plan_horizon: int = 64
     """the number of steps to plan for"""
+    episode_length: int = 300
+    """the number of steps to run the episode for"""
     plot_diffusion_plan: bool = False
     """whether to plot the diffusion plan"""
     num_diffusion_plans: int = 10
@@ -145,6 +147,27 @@ def plot_trajectory_plan(start_obs, goal, state_plan, run_id):
     # plt.close()
     return plt
 
+# Function to plot and save trajectory plan
+def continue_plot_trajectory_plan(plt_fig, start_obs, goal, state_plan, run_id):
+    """
+    Plot and save a figure of the start observation, goal, and state plan.
+    
+    Args:
+        start_obs: The starting observation (position)
+        goal: The goal position (if available)
+        state_plan: The planned trajectory states
+        step: Current global step for filename
+    """
+    # Create a figure for plotting the plan
+    if plt_fig is None:
+        plt_fig = plt.figure(figsize=(10, 8))
+    
+    # Plot state plan (positions only - first two dimensions)
+    plt_fig.gca().scatter(state_plan[0, :, 0], state_plan[0, :, 1], s=5, alpha=0.7, c='blue')
+    
+    # plt.close()
+    return plt_fig
+
 def plot_closed_loop_trajectory(plt_fig, observations, run_id):
     """
     Plot the actual closed loop trajectory on top of the planned trajectory and save the figure.
@@ -166,7 +189,7 @@ def plot_closed_loop_trajectory(plt_fig, observations, run_id):
     plt_fig.gca().scatter(observations[:, 0], observations[:, 1], s=10, c='red', alpha=0.7, label='Actual trajectory')
     
     # Highlight start and end of actual trajectory
-    plt_fig.gca().scatter(start_pos[0], start_pos[1], s=100, c='darkgreen', marker='o', label='Actual start')
+    # plt_fig.gca().scatter(start_pos[0], start_pos[1], s=100, c='darkgreen', marker='o', label='Actual start')
     plt_fig.gca().scatter(end_pos[0], end_pos[1], s=100, c='darkred', marker='x', label='Actual end')
     
     # Update the title and legend
@@ -239,7 +262,7 @@ if __name__ == "__main__":
 
     # env setup
     envs = gym.vector.SyncVectorEnv(
-        [make_env(args.env_id, args.seed + i, i, args.capture_video, run_name, args.plan_horizon) for i in range(1)]
+        [make_env(args.env_id, args.seed + i, i, args.capture_video, run_name, args.episode_length) for i in range(1)]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
 
@@ -275,9 +298,10 @@ if __name__ == "__main__":
 
             if step_along_diffusion_plan % args.action_chunk_size == 0:
                 diffusion_plan, state_plan = diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)
-                
                 if episode_step == 0:
                     plt_fig = plot_trajectory_plan(start_obs, goal, state_plan, ii)
+                else:
+                    plt_fig = continue_plot_trajectory_plan(plt_fig, start_obs, goal, state_plan, ii)
 
                 if args.plot_diffusion_plan:
                     diffusion_plans = []

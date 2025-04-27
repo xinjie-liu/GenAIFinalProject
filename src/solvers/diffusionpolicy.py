@@ -112,9 +112,9 @@ class DiffusionPolicy:
             self.epoch = 0
             return
         checkpoint = torch.load(os.path.join(self.args.ckpt_path, 'checkpoint.pth'), weights_only=True)  # Security measure [4][5]
-        self.net.load_state_dict(checkpoint['model_state_dict'])
-        self.optimizer.load_state_dict(checkpoint['optimzer_state_dict'])
-        self.epoch = checkpoint['epoch']
+        self.net.load_state_dict(checkpoint)
+        # self.optimizer.load_state_dict(checkpoint['optimzer_state_dict'])
+        # self.epoch = checkpoint['epoch']
 
 
     def get_loss_weights(self, action_weight, discount, weights_dict):
@@ -379,7 +379,7 @@ class DiffusionPolicy:
             denoised_samples[:,:,:action_dim].detach().cpu().numpy(),
             key='actions'
         )
-        return unnormalize_actions
+        return unnormalize_actions, unnormalize_obs
 
     def test_policy_act(self, condition, sample_shape, action_dim, normalizer):
         
