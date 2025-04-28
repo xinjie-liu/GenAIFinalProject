@@ -18,6 +18,7 @@ import json
 from src.datasets.sequence_dataset import SequenceDataset
 from src.solvers.diffusionpolicy import DiffusionPolicy, cycle
 import matplotlib.pyplot as plt
+from src.solvers import *
 
 @dataclass
 class Args:
@@ -49,7 +50,7 @@ class Args:
     """the number of runs for evaluation"""
     action_chunk_size: int = 64
     """the number of actions to take at a time"""
-    plan_horizon: int = 64
+    plan_horizon: int = 32
     """the number of steps to plan for"""
     episode_length: int = 300
     """the number of steps to run the episode for"""
@@ -57,6 +58,10 @@ class Args:
     """whether to plot the diffusion plan"""
     num_diffusion_plans: int = 10
     """the number of diffusion plans to plot"""
+    tag: int = 'latest'
+    """the tag of the model to load, if not specified, the latest model will be loaded"""
+    network: int = 'unet'
+    """the tag of the model to load, if not specified, the latest model will be loaded"""
 
 def make_env(env_id, seed, idx, capture_video, run_name, max_episode_steps):
     def thunk():
@@ -168,7 +173,7 @@ def continue_plot_trajectory_plan(plt_fig, start_obs, goal, state_plan, run_id):
     # plt.close()
     return plt_fig
 
-def plot_closed_loop_trajectory(plt_fig, observations, run_id):
+def plot_closed_loop_trajectory(plt_fig, observations, run_id, args):
     """
     Plot the actual closed loop trajectory on top of the planned trajectory and save the figure.
     
@@ -197,13 +202,16 @@ def plot_closed_loop_trajectory(plt_fig, observations, run_id):
     plt_fig.gca().legend()
     
     # Save the combined figure
-    os.makedirs("trajectory_plots", exist_ok=True)
-    plt_fig.savefig(f"trajectory_plots/combined_trajectory_run_{run_id}.png")
+    path_dir = os.path.join("trajectory_plots", args.env_id, args.algorithm, args.network)
+    os.makedirs(path_dir, exist_ok=True)
+    plt_fig.savefig(os.path.join(path_dir, f"combined_trajectory_run_{run_id}.png"))
     plt_fig.close()
 
 if __name__ == "__main__":
 
     args = tyro.cli(Args)
+    hydra.initialize(config_path="../configs")
+    diffuser_args = compose(config_name=args.config_name)
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
         import wandb
@@ -224,14 +232,16 @@ if __name__ == "__main__":
     )
 
     # Load configuration from YAML file using Hydra
-    hydra.initialize(config_path="../configs")
-    diffuser_args = compose(config_name=args.config_name)
+
     
     # Rest of your existing configuration can be adjusted or merged with loaded config
     # You can override specific values from the loaded config if needed
-    diffuser_args.env_name = args.dataset_name
+    # diffuser_args.env_name = args.dataset_name
     diffuser_args.seed = args.seed
-
+    diffuser_args.scheduler = args.algorithm
+    diffuser_args.tag = args.tag
+    diffuser_args.network = args.network
+    
     dataset = SequenceDataset(
         env = diffuser_args.env_name,
         max_n_episodes=500
@@ -255,7 +265,11 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
-    diffuser = DiffusionPolicy(diffuser_args, predict_epsilon = False)
+    if args.algorithm == "DDPM" or args.algorithm=='DDIM':
+        diffuser = DiffusionPolicy(diffuser_args)
+    elif args.algorithm == 'Flow':
+        diffuser = FlowPolicy(diffuser_args)
+        
     diffuser.load_model()
     sample_shape = (1, args.plan_horizon, dataset[0].trajectories.shape[-1])
     # sample_shape = (1,) + dataset[0].trajectories.shape
@@ -277,8 +291,39 @@ if __name__ == "__main__":
 
     trajectories_across_episodes = []
 
+    if 'Umaze' in args.env_id: 
+        maze_map =  [[1, 1, 1, 1, 1], [1, 0, 0, 0, 1], [1, 1, 1, 0, 1], [1, 0, 0, 0, 1], [1, 1, 1, 1, 1]]
+        start_cell = np.array([3,1], dtype=np.int32)
+        goal_cell = np.array([1,1], dtype=np.int32)
+        
+    if 'Medium' in args.env_id: 
+        maze_map = [[1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 1, 1, 0, 0, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 1, 0, 0, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 0, 0, 1, 0, 1], [1, 0, 0, 0, 1, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1]]
+        start_cell = np.array([1,1], dtype=np.int32)
+        goal_cell = np.array([6,6], dtype=np.int32)
+
+    if 'Large' in args.env_id: 
+        maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], 
+                    [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1],
+                    [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1], 
+                    [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1], 
+                    [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1],
+                    [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1], 
+                    [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1], 
+                    [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1], 
+                    [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]
+        start_cell = np.array([1,4], dtype=np.int32)
+        goal_cell = np.array([7,7], dtype=np.int32)
+        
+    
     for ii in range(args.num_runs):
-        obs, _ = envs.reset(seed=args.seed)
+        if 'Maze' in args.env_id or 'maze' in args.env_id:
+            print("Starting run %d with start cell %s and goal cell %s" % (ii, str(start_cell), str(goal_cell)))
+            obs, _ = envs.reset(seed=args.seed,
+                                options={
+                        "reset_cell": start_cell,
+                        "goal_cell": goal_cell})
+        else:
+            obs, _ = envs.reset(seed=args.seed)
         step_along_diffusion_plan = 0
         diffusion_plan = None
         start_obs = copy.deepcopy(obs["observation"].squeeze(0))
@@ -323,6 +368,7 @@ if __name__ == "__main__":
             episode_data["observations"].append(obs["observation"].squeeze(0).tolist())
             episode_data["actions"].append(actions.squeeze(0).tolist())
             episode_data["rewards"].append(float(rewards))
+            print(rewards)
             # Added this to handle both termination and truncation
             ds = np.logical_or(terminations, truncations)
             if ds.any():
@@ -330,7 +376,8 @@ if __name__ == "__main__":
                 print(f"global_step={global_step}, episodic_return={infos['episode']['r'][0]}")
                 writer.add_scalar("charts/episodic_return", infos['episode']['r'][0], global_step)
                 writer.add_scalar("charts/episodic_length", infos['episode']['l'][0], global_step)
-                episodic_reward.append(infos['episode']['r'][0])
+                # episodic_reward.append(infos['episode']['r'][0])
+                episodic_reward.append(sum(episode_data["rewards"]))
                 break
             global_step += 1
 
@@ -357,8 +404,9 @@ if __name__ == "__main__":
             invalid_counter = is_valid_trajectory(episode_data['observations'], maze_map, invalid_counter, xbound, ybound)
         
         trajectories_across_episodes.append(episode_data)
-        plot_closed_loop_trajectory(plt_fig, np.stack(episode_data["observations"]), ii)
-
+        plot_closed_loop_trajectory(plt_fig, np.stack(episode_data["observations"]), ii, args)
+        
+        
     perc_valid_traj = ((args.num_runs - invalid_counter) / (args.num_runs)) * 100
     
     print(f"Average episodic reward: {np.mean(episodic_reward)}")
@@ -378,14 +426,17 @@ if __name__ == "__main__":
     }
 
     # Create output folder if it doesn't exist
-    os.makedirs("results", exist_ok=True)
+    path_dir = os.path.join("results", args.env_id, args.algorithm, args.network)
 
-    with open(f"results/{args.exp_name}_results.json", "w") as f:
+    os.makedirs(path_dir, exist_ok=True)
+
+    with open(os.path.join(path_dir, f"{args.exp_name}_results.json"), "w") as f:
         json.dump(results, f, indent=4)
 
     # Create trajectories folder if it doesn't exist
-    os.makedirs("trajectories", exist_ok=True)
-    with open(f"trajectories/{args.exp_name}_trajectories.json", "w") as f:
+    path_dir = os.path.join("trajectories", args.env_id, args.algorithm, args.network)
+
+    with open(os.path.join(path_dir,f"{args.exp_name}_trajectories.json"), "w") as f:
         json.dump(trajectories_across_episodes, f, indent=4)
 
 
