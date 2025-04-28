@@ -46,7 +46,7 @@ class Args:
     """the dataset name of the task"""
     config_name: str = "maze_2d_medium_dense.yaml"
     """the config name of the task"""
-    algorithm: str = "diffusion"
+    algorithm: str = "DDPM"
     """the algorithm to use"""
     num_runs: int = 10
     """the number of runs for evaluation"""
@@ -62,9 +62,9 @@ class Args:
     """whether to plot the diffusion plan"""
     num_diffusion_plans: int = 10
     """the number of diffusion plans to plot"""
-    tag: int = 'latest'
+    tag: int = 'ddpm_dit'
     """the tag of the model to load, if not specified, the latest model will be loaded"""
-    network: int = 'unet'
+    network: int = 'dit'
     """the tag of the model to load, if not specified, the latest model will be loaded"""
 
 def make_env(env_id, seed, idx, capture_video, run_name, max_episode_steps):
@@ -421,13 +421,14 @@ if __name__ == "__main__":
             conditions = {0: obs_norm.to(device)}
 
             if step_along_diffusion_plan % args.action_chunk_size == 0:
-                diffusion_plan, state_plan, normalize_actions, normalize_obs = diffuser.policy_act(conditions, sample_shape, action_dim, normalizer)
+                goal_norm = normalizer.normalize(np.concatenate((goal, np.array([0.1, 0.1])), axis=0), key='observations')
+                diffusion_plan, state_plan, normalize_actions, normalize_obs = diffuser.policy_act(conditions, sample_shape, action_dim, normalizer, goal = torch.tensor(goal_norm[:2], device=device))
                 print("normalize_obs", normalize_obs[:, -1, :])
                 conditions = {0: normalize_obs[:, -1, :]}
                 if args.num_diffusion_segments > 2:
                     for seg_ii in range(args.num_diffusion_segments - 2):
                         print("conditions", conditions)
-                        diffusion_plan_, state_plan_, normalize_actions, normalize_obs = diffuser.policy_act(conditions, sample_shape, action_dim, normalizer)
+                        diffusion_plan_, state_plan_, normalize_actions, normalize_obs = diffuser.policy_act(conditions, sample_shape, action_dim, normalizer, goal = torch.tensor(goal_norm[:2], device=device))
                         diffusion_plan = np.concatenate((diffusion_plan, diffusion_plan_), axis=1)
                         state_plan = np.concatenate((state_plan, state_plan_), axis=1)
                         print("normalize_obs", normalize_obs[:, -1, :])
@@ -449,7 +450,7 @@ if __name__ == "__main__":
                 if args.plot_diffusion_plan:
                     diffusion_plans = []
                     for i in range(args.num_diffusion_plans):
-                        diffusion_plans.append(diffuser.policy_act(conditions, sample_shape, action_dim, normalizer)[0])
+                        diffusion_plans.append(diffuser.policy_act(conditions, sample_shape, action_dim, normalizer, goal = torch.tensor(goal_norm[:2], device=device))[0])
                     # TODO: @Hasif: plot diffusion plans and render a video
                 step_along_diffusion_plan = 0
                 actions = diffusion_plan[0, 0, :][None, :]

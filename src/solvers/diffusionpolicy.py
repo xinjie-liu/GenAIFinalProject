@@ -360,10 +360,16 @@ class DiffusionPolicy:
     # plt.grid(True, linestyle='--', alpha=0.5)
     # plt.savefig('/plots/2DMaze/generation/samples_final.png')
 
-    def policy_act(self, condition, sample_shape, action_dim, normalizer):
+
+    def policy_act(self, condition, sample_shape, action_dim, normalizer, goal = None):
         
         sampled_noise = torch.normal(torch.zeros(sample_shape), std=torch.tensor(1.0)) 
         denoised_samples = sampled_noise.clone().cuda()
+
+        def get_distance_loss(denoised_samples):
+            # return torch.pow(torch.norm(denoised_samples[:,-1,self.args.action_dim:].squeeze()[:2] - goal), 2)
+            return torch.pow(torch.norm(denoised_samples[:,:,2:4] - goal), 2)
+
         for step in range(self.args.num_train_steps):
             # Perform one denoising step
             with torch.no_grad():
@@ -371,6 +377,9 @@ class DiffusionPolicy:
                 denoised_samples = self.infer_diffusion_step(denoised_samples,
                                                         condition, self.args.num_train_steps - 1 - step,
                                                         action_dim)
+                distance_loss_gradient = torch.autograd.functional.jacobian(get_distance_loss, denoised_samples)
+                denoised_samples = denoised_samples - 0.01 * distance_loss_gradient
+                
         unnormalize_obs = normalizer.unnormalize(
             denoised_samples[:,:,self.args.action_dim:].detach().cpu().numpy(),
             key='observations'
