@@ -50,7 +50,7 @@ class Args:
     """the algorithm to use"""
     num_runs: int = 10
     """the number of runs for evaluation"""
-    action_chunk_size: int = 15
+    action_chunk_size: int = 32
     """the number of actions to take at a time"""
     plan_horizon: int = 32
     """the number of steps to plan for"""
@@ -293,7 +293,7 @@ if __name__ == "__main__":
     )
 
     # Check if there's a saved normalizer
-    normalizer_path = os.path.join(diffuser_args.ckpt_path + "_GN", 'normalizer.pkl')
+    normalizer_path = os.path.join(diffuser_args.ckpt_path, 'normalizer.pkl')
     
     # Try to load the normalizer if it exists
     normalizer = None
