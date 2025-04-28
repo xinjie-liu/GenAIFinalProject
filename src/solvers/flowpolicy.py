@@ -143,6 +143,7 @@ class FlowPolicy:
         
                 
     def load_model(self):
+        print(f"Loading model from checkpoint...{self.args.ckpt_path}")
         if not os.path.exists(os.path.join(self.args.ckpt_path, 'checkpoint.pth')):
             print("Checkpoint not found. Training from scratch.")
             self.epoch = 0
@@ -403,7 +404,6 @@ class FlowPolicy:
         for step in range(self.args.num_train_steps):
             # Perform one denoising step
             with torch.no_grad():
-                print(f"Step {step}")
                 denoised_samples = self.infer_diffusion_step(denoised_samples,
                                                         condition, self.args.num_train_steps - 1 - step,
                                                         action_dim)
@@ -415,7 +415,7 @@ class FlowPolicy:
             denoised_samples[:,:,:action_dim].detach().cpu().numpy(),
             key='actions'
         )
-        return unnormalize_actions
+        return unnormalize_actions, unnormalize_obs
 
     def test_policy_act(self, condition, sample_shape, action_dim, normalizer):
         
@@ -424,7 +424,6 @@ class FlowPolicy:
         for step in range(1000):
             # Perform one denoising step
             with torch.no_grad():
-                print(f"Step {step}")
                 denoised_samples = self.infer_diffusion_step(denoised_samples,
                                                         condition, 999 - step,
                                                         action_dim)

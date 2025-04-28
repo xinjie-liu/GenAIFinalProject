@@ -107,14 +107,15 @@ class DiffusionPolicy:
         
                 
     def load_model(self):
+        print(f"Loading model from checkpoint...{self.args.ckpt_path}")
         if not os.path.exists(os.path.join(self.args.ckpt_path, 'checkpoint.pth')):
             print("Checkpoint not found. Training from scratch.")
             self.epoch = 0
             return
         checkpoint = torch.load(os.path.join(self.args.ckpt_path, 'checkpoint.pth'), weights_only=True)  # Security measure [4][5]
-        self.net.load_state_dict(checkpoint)
-        # self.optimizer.load_state_dict(checkpoint['optimzer_state_dict'])
-        # self.epoch = checkpoint['epoch']
+        self.net.load_state_dict(checkpoint['model_state_dict'])
+        self.optimizer.load_state_dict(checkpoint['optimzer_state_dict'])
+        self.epoch = checkpoint['epoch']
 
 
     def get_loss_weights(self, action_weight, discount, weights_dict):
@@ -367,10 +368,10 @@ class DiffusionPolicy:
         for step in range(self.args.num_train_steps):
             # Perform one denoising step
             with torch.no_grad():
-                print(f"Step {step}")
                 denoised_samples = self.infer_diffusion_step(denoised_samples,
                                                         condition, self.args.num_train_steps - 1 - step,
                                                         action_dim)
+                
         unnormalize_obs = normalizer.unnormalize(
             denoised_samples[:,:,self.args.action_dim:].detach().cpu().numpy(),
             key='observations'
@@ -388,7 +389,6 @@ class DiffusionPolicy:
         for step in range(1000):
             # Perform one denoising step
             with torch.no_grad():
-                print(f"Step {step}")
                 denoised_samples = self.infer_diffusion_step(denoised_samples,
                                                         condition, 999 - step,
                                                         action_dim)
