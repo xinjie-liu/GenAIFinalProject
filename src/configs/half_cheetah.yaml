@@ -2,7 +2,7 @@ epochs: 100
 steps_per_epoch: 1000
 train_batch_size: 1024
 env_name: mujoco/halfcheetah/medium-v0
-scheduler: DDPM
+scheduler: DDPM # Flow, DDIM
 tag: GN
 seed: 0
 eval_batch: 256
@@ -15,5 +15,5 @@ clip_sample: false
 loss_factor: 0
 horizon: 32
 action_weight: 10.0
-predict_epsilon: true
+predict_epsilon: false
 network: unet
