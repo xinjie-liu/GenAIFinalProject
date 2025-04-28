@@ -19,6 +19,8 @@ from src.datasets.sequence_dataset import SequenceDataset
 from src.solvers.diffusionpolicy import DiffusionPolicy, cycle
 import matplotlib.pyplot as plt
 from src.solvers import *
+import matplotlib.patches as patches
+import pickle
 
 @dataclass
 class Args:
@@ -38,21 +40,23 @@ class Args:
     """the entity (team) of wandb's project"""
     capture_video: bool = False
     """whether to capture videos of the agent performances (check out `videos` folder)"""
-    env_id: str = "PointMaze_LargeDense-v3"
+    env_id: str = "PointMaze_MediumDense-v3"
     """the environment id of the task"""
-    dataset_name: str = 'D4RL/pointmaze/large-dense-v2'
+    dataset_name: str = 'D4RL/pointmaze/medium-dense-v2'
     """the dataset name of the task"""
-    config_name: str = "maze_2d_large_dense.yaml"
+    config_name: str = "maze_2d_medium_dense.yaml"
     """the config name of the task"""
     algorithm: str = "diffusion"
     """the algorithm to use"""
     num_runs: int = 10
     """the number of runs for evaluation"""
-    action_chunk_size: int = 64
+    action_chunk_size: int = 15
     """the number of actions to take at a time"""
     plan_horizon: int = 32
     """the number of steps to plan for"""
     episode_length: int = 300
+    num_diffusion_segments: int = 1
+    """the number of diffusion segments to use"""
     """the number of steps to run the episode for"""
     plot_diffusion_plan: bool = False
     """whether to plot the diffusion plan"""
@@ -116,7 +120,7 @@ def is_valid_trajectory(trajectory, maze_map, invalid_counter, xbounds, ybounds)
     return invalid_counter  # If the trajectory passed all checks, it's valid
 
 # Function to plot and save trajectory plan
-def plot_trajectory_plan(start_obs, goal, state_plan, run_id):
+def plot_trajectory_plan(start_obs, goal, state_plan, run_id, maze_map, xbounds, ybounds):
     """
     Plot and save a figure of the start observation, goal, and state plan.
     
@@ -126,9 +130,29 @@ def plot_trajectory_plan(start_obs, goal, state_plan, run_id):
         state_plan: The planned trajectory states
         step: Current global step for filename
     """
-    # Create a figure for plotting the plan
-    plt.figure(figsize=(10, 8))
+    # Create a figure for plotting the plan with an axis object
+    fig, ax = plt.subplots(figsize=(10, 8))
     
+    maze = np.array(maze_map)
+
+    # Size of each cell
+    cell_size = 1
+
+    # Draw the walls
+    rows, cols = maze.shape
+    for y in range(rows):
+        for x in range(cols):
+            if maze[y, x] == 1:
+                wall = patches.Rectangle((x * cell_size + xbounds[0], (rows - y - 1) * cell_size + ybounds[0]),
+                                        width=cell_size, height=cell_size,
+                                        facecolor='black')
+                ax.add_patch(wall)
+
+    # # Set plot limits and appearance
+    # ax.set_xlim(0, cols * cell_size)
+    # ax.set_ylim(0, rows * cell_size)
+    # ax.set_aspect('equal')
+
     # Plot state plan (positions only - first two dimensions)
     plt.scatter(state_plan[0, :, 0], state_plan[0, :, 1], s=5, alpha=0.7, label='Planned trajectory', c='blue')
     
@@ -150,7 +174,7 @@ def plot_trajectory_plan(start_obs, goal, state_plan, run_id):
     os.makedirs("trajectory_plots", exist_ok=True)
     # plt.savefig(f"trajectory_plots/trajectory_plan_run_{run_id}.png")
     # plt.close()
-    return plt
+    return fig
 
 # Function to plot and save trajectory plan
 def continue_plot_trajectory_plan(plt_fig, start_obs, goal, state_plan, run_id):
@@ -231,6 +255,27 @@ if __name__ == "__main__":
         "|param|value|\n|-|-|\n%s" % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
     )
 
+    if 'umaze' in args.dataset_name: 
+        maze_map =  [[1, 1, 1, 1, 1], [1, 0, 0, 0, 1], [1, 1, 1, 0, 1], [1, 0, 0, 0, 1], [1, 1, 1, 1, 1]]
+        xbound = (-2.5,2.5)
+        ybound = (-2.5,2.5)
+        action_dim = 2
+        observation_dim = 4
+    
+    if 'medium' in args.dataset_name: 
+        maze_map = [[1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 1, 1, 0, 0, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 1, 0, 0, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 0, 0, 1, 0, 1], [1, 0, 0, 0, 1, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1]]
+        xbound = (-4,4)
+        ybound = (-4,4)
+        action_dim = 2
+        observation_dim = 4
+
+    if 'large' in args.dataset_name: 
+        maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1], [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1], [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1], [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1], [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]
+        xbound = (-6, 6)
+        ybound = (-4.5, 4.5)
+        action_dim = 2
+        observation_dim = 4
+
     # Load configuration from YAML file using Hydra
 
     
@@ -246,16 +291,47 @@ if __name__ == "__main__":
         env = diffuser_args.env_name,
         max_n_episodes=500
     )
+
+    # Check if there's a saved normalizer
+    normalizer_path = os.path.join(diffuser_args.ckpt_path + "_GN", 'normalizer.pkl')
     
-    # Add observation_dim to diffuser_args using open_dict context
-    with open_dict(diffuser_args):
-        diffuser_args.horizon = args.plan_horizon # dataset.horizon
-        diffuser_args.observation_dim = dataset.observation_dim
-        diffuser_args.action_dim = dataset.action_dim
+    # Try to load the normalizer if it exists
+    normalizer = None
+    if os.path.exists(normalizer_path):
+        try:
+            print(f"Loading normalizer from {normalizer_path}")
+            with open(normalizer_path, 'rb') as f:
+                normalizer = pickle.load(f)
+            print("Successfully loaded normalizer")
+        except Exception as e:
+            print(f"Error loading normalizer: {e}")
+            normalizer = None
+    
+    # Create dataset with the loaded normalizer if available
+    if normalizer is not None:
+        # Use the loaded normalizer directly, no need to create a dataset
+        print("Using loaded normalizer without creating a dataset")
+    else:
+        # If no normalizer exists or loading failed, create a new dataset with a new normalizer
+        print(f"No valid normalizer found, creating a new dataset to get normalizer")
+        dataset = SequenceDataset(
+            env=diffuser_args.env_name,
+            max_n_episodes=diffuser_args.max_n_episodes
+        )
         
-    dataloader_vis = cycle(torch.utils.data.DataLoader(
-            dataset, batch_size=diffuser_args.eval_batch, num_workers=0, shuffle=True, pin_memory=True
-        ))
+        # Save the normalizer
+        normalizer = dataset.normalizer
+        os.makedirs(os.path.dirname(normalizer_path), exist_ok=True)
+        with open(normalizer_path, 'wb') as f:
+            pickle.dump(normalizer, f)
+        print(f"Saved normalizer to {normalizer_path}")
+        
+    # Update diffuser_args with dimensions from dataset
+    with open_dict(diffuser_args):
+        diffuser_args.observation_dim = observation_dim
+        diffuser_args.action_dim = action_dim
+    
+    # Now normalizer is either loaded from file or newly created with dataset
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -271,7 +347,7 @@ if __name__ == "__main__":
         diffuser = FlowPolicy(diffuser_args)
         
     diffuser.load_model()
-    sample_shape = (1, args.plan_horizon, dataset[0].trajectories.shape[-1])
+    sample_shape = (1, diffuser_args.horizon, action_dim+observation_dim)
     # sample_shape = (1,) + dataset[0].trajectories.shape
 
     # env setup
@@ -279,6 +355,7 @@ if __name__ == "__main__":
         [make_env(args.env_id, args.seed + i, i, args.capture_video, run_name, args.episode_length) for i in range(1)]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
+    envs.reset(seed=args.seed)
 
     max_action = float(envs.single_action_space.high[0])
     envs.single_observation_space.dtype = np.float32
@@ -328,6 +405,8 @@ if __name__ == "__main__":
         diffusion_plan = None
         start_obs = copy.deepcopy(obs["observation"].squeeze(0))
         goal = copy.deepcopy(obs["desired_goal"].squeeze(0))
+        print("start_obs", start_obs)
+        print("goal", goal)
 
         episode_data = {    #Episode data to be logged for visualizations
             "observations": [],
@@ -338,21 +417,40 @@ if __name__ == "__main__":
         plt_fig = None
         while True:
             obs_tensor = torch.tensor(obs["observation"], device=device, dtype=torch.float32)
-            obs_norm = dataset.normalizer.normalize(obs_tensor.cpu(), key='observations')
+            obs_norm = normalizer.normalize(obs_tensor.cpu(), key='observations')
             conditions = {0: obs_norm.to(device)}
 
             if step_along_diffusion_plan % args.action_chunk_size == 0:
-                diffusion_plan, state_plan = diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)
+                diffusion_plan, state_plan, normalize_actions, normalize_obs = diffuser.policy_act(conditions, sample_shape, action_dim, normalizer)
+                print("normalize_obs", normalize_obs[:, -1, :])
+                conditions = {0: normalize_obs[:, -1, :]}
+                if args.num_diffusion_segments > 2:
+                    for seg_ii in range(args.num_diffusion_segments - 2):
+                        print("conditions", conditions)
+                        diffusion_plan_, state_plan_, normalize_actions, normalize_obs = diffuser.policy_act(conditions, sample_shape, action_dim, normalizer)
+                        diffusion_plan = np.concatenate((diffusion_plan, diffusion_plan_), axis=1)
+                        state_plan = np.concatenate((state_plan, state_plan_), axis=1)
+                        print("normalize_obs", normalize_obs[:, -1, :])
+                        conditions = {0: normalize_obs[:, -1, :]}
+                if args.num_diffusion_segments > 1:
+                    goal_norm = normalizer.normalize(np.concatenate((goal, np.array([0.1, 0.1])), axis=0), key='observations')
+                    print("conditions", conditions)
+                    diffusion_plan_, state_plan_, normalize_actions, normalize_obs = diffuser.policy_act_final(conditions, sample_shape, action_dim, normalizer, goal = torch.tensor(goal_norm[:2], device=device))
+                    diffusion_plan = np.concatenate((diffusion_plan, diffusion_plan_), axis=1)
+                    state_plan = np.concatenate((state_plan, state_plan_), axis=1)
+                
                 if episode_step == 0:
-                    plt_fig = plot_trajectory_plan(start_obs, goal, state_plan, ii)
+                    print("start_obs", start_obs)
+                    print("goal", goal)
+                    plt_fig = plot_trajectory_plan(start_obs, goal, state_plan, ii, maze_map, xbound, ybound)
                 else:
                     plt_fig = continue_plot_trajectory_plan(plt_fig, start_obs, goal, state_plan, ii)
 
                 if args.plot_diffusion_plan:
                     diffusion_plans = []
                     for i in range(args.num_diffusion_plans):
-                        diffusion_plans.append(diffuser.policy_act(conditions, sample_shape, dataset.action_dim, dataset.normalizer)[0])
-                    # TODO: @Harsif: plot diffusion plans and render a video
+                        diffusion_plans.append(diffuser.policy_act(conditions, sample_shape, action_dim, normalizer)[0])
+                    # TODO: @Hasif: plot diffusion plans and render a video
                 step_along_diffusion_plan = 0
                 actions = diffusion_plan[0, 0, :][None, :]
                 step_along_diffusion_plan += 1
@@ -384,24 +482,7 @@ if __name__ == "__main__":
             # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
             obs = next_obs
         
-
-        if 'umaze' in args.dataset_name: 
-            maze_map =  [[1, 1, 1, 1, 1], [1, 0, 0, 0, 1], [1, 1, 1, 0, 1], [1, 0, 0, 0, 1], [1, 1, 1, 1, 1]]
-            xbound = (-2.5,2.5)
-            ybound = (-2.5,2.5)
-            invalid_counter = is_valid_trajectory(episode_data['observations'], maze_map, invalid_counter, xbound, ybound)
-        
-        if 'medium' in args.dataset_name: 
-            maze_map = [[1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 1, 1, 0, 0, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 1, 0, 0, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 0, 0, 1, 0, 1], [1, 0, 0, 0, 1, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1]]
-            xbound = (-4,4)
-            ybound = (-4,4)
-            invalid_counter = is_valid_trajectory(episode_data['observations'], maze_map, invalid_counter, xbound, ybound)
-
-        if 'large' in args.dataset_name: 
-            maze_map = [[1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1], [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1], [1, 0, 1, 1, 0, 1, 0, 1, 0, 1, 0, 1], [1, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 1], [1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 0, 1], [1, 0, 0, 1, 0, 1, 0, 0, 0, 0, 0, 1], [1, 1, 0, 1, 0, 1, 0, 1, 0, 1, 1, 1], [1, 0, 0, 1, 0, 0, 0, 1, 0, 0, 0, 1], [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]]
-            xbound = (-6, 6)
-            ybound = (-4.5, 4.5)
-            invalid_counter = is_valid_trajectory(episode_data['observations'], maze_map, invalid_counter, xbound, ybound)
+        invalid_counter = is_valid_trajectory(episode_data['observations'], maze_map, invalid_counter, xbound, ybound)
         
         trajectories_across_episodes.append(episode_data)
         plot_closed_loop_trajectory(plt_fig, np.stack(episode_data["observations"]), ii, args)
