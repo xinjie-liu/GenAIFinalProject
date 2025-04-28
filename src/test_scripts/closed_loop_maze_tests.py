@@ -278,7 +278,7 @@ if __name__ == "__main__":
     diffuser_args.seed = args.seed
 
     # Check if there's a saved normalizer
-    normalizer_path = os.path.join(diffuser_args.ckpt_path, 'normalizer.pkl')
+    normalizer_path = os.path.join(diffuser_args.ckpt_path + "_GN", 'normalizer.pkl')
     
     # Try to load the normalizer if it exists
     normalizer = None
@@ -301,7 +301,7 @@ if __name__ == "__main__":
         print(f"No valid normalizer found, creating a new dataset to get normalizer")
         dataset = SequenceDataset(
             env=diffuser_args.env_name,
-            max_n_episodes=1000
+            max_n_episodes=diffuser_args.max_n_episodes
         )
         
         # Save the normalizer
@@ -336,6 +336,7 @@ if __name__ == "__main__":
         [make_env(args.env_id, args.seed + i, i, args.capture_video, run_name, args.episode_length) for i in range(1)]
     )
     assert isinstance(envs.single_action_space, gym.spaces.Box), "only continuous action space is supported"
+    envs.reset(seed=args.seed)
 
     max_action = float(envs.single_action_space.high[0])
     envs.single_observation_space.dtype = np.float32
@@ -351,7 +352,7 @@ if __name__ == "__main__":
 
 
     for ii in range(args.num_runs):
-        obs, _ = envs.reset(seed=args.seed)
+        obs, _ = envs.reset()
         step_along_diffusion_plan = 0
         diffusion_plan = None
         start_obs = copy.deepcopy(obs["observation"].squeeze(0))
