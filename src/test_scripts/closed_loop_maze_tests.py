@@ -368,6 +368,8 @@ if __name__ == "__main__":
 
     trajectories_across_episodes = []
 
+    inference_times = []
+
     if 'Umaze' in args.env_id: 
         maze_map =  [[1, 1, 1, 1, 1], [1, 0, 0, 0, 1], [1, 1, 1, 0, 1], [1, 0, 0, 0, 1], [1, 1, 1, 1, 1]]
         start_cell = np.array([3,1], dtype=np.int32)
@@ -408,6 +410,8 @@ if __name__ == "__main__":
         print("start_obs", start_obs)
         print("goal", goal)
 
+        run_inference_times = []
+
         episode_data = {    #Episode data to be logged for visualizations
             "observations": [],
             "actions": [],
@@ -422,7 +426,10 @@ if __name__ == "__main__":
 
             if step_along_diffusion_plan % args.action_chunk_size == 0:
                 goal_norm = normalizer.normalize(np.concatenate((goal, np.array([0.1, 0.1])), axis=0), key='observations')
+                start_time = time.perf_counter()
                 diffusion_plan, state_plan, normalize_actions, normalize_obs = diffuser.policy_act(conditions, sample_shape, action_dim, normalizer, goal = torch.tensor(goal_norm[:2], device=device))
+                end_time = time.perf_counter()
+                run_inference_times.append(end_time - start_time)
                 print("normalize_obs", normalize_obs[:, -1, :])
                 conditions = {0: normalize_obs[:, -1, :]}
                 if args.num_diffusion_segments > 2:
@@ -484,7 +491,7 @@ if __name__ == "__main__":
             obs = next_obs
         
         invalid_counter = is_valid_trajectory(episode_data['observations'], maze_map, invalid_counter, xbound, ybound)
-        
+        inference_times.append(run_inference_times)
         trajectories_across_episodes.append(episode_data)
         plot_closed_loop_trajectory(plt_fig, np.stack(episode_data["observations"]), ii, args)
         
@@ -494,6 +501,8 @@ if __name__ == "__main__":
     print(f"Average episodic reward: {np.mean(episodic_reward)}")
     print(f"Percent valid trajectories: {perc_valid_traj}")
     writer.add_scalar("charts/average_reward", np.mean(episodic_reward), global_step)
+    writer.add_scalar("charts/avg_inference_time", np.mean([t for run in inference_times for t in run]), global_step)
+
     envs.close()
     writer.close()
 
@@ -504,6 +513,9 @@ if __name__ == "__main__":
         "episode_rewards": episodic_reward,
         "average_reward": float(np.mean(episodic_reward)),  # convert from np.float64
         "Percent_valid_trajectories": perc_valid_traj,
+        "avg_inference_time_overall": float(np.mean([t for run in inference_times for t in run])),
+        "avg_inference_time_per_step": float(np.mean([t for run in inference_times for t in run])) / args.episode_length,
+        "inference_times": [float(np.mean(run)) for run in inference_times],
         "timestamp": int(time.time())
     }
 
